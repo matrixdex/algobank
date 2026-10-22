@@ -167,6 +167,8 @@ Import with a literal name that is a package module is resolved as a normal impo
 | G9 | The digest is truncated to 12 hex characters. | Not collision-safe for production. | Use the full SHA-256. |
 | G10 | Dynamic behavior that avoids every listed pattern (functions stored in dictionaries and called by key, for example). | Not detected. | Runtime observation and host enforcement. |
 | G11 | Hashes come from Python's `ast.dump`, whose output can change between interpreter versions. v0.1 targets Python 3.14 only. | The same source could get a different root under another Python version. | Record the interpreter version with every root. Add a test that compares roots across supported versions. Longer term, hash a version-independent serialization of the tree. |
+| G12 | Introspection through dunder attributes (walking class hierarchies or function globals) can reach effectful functions without importing them. v0.1 reports such code as scope none, with no flags. | A compute part can hide real effects. **This is a soundness gap.** | Treat dunder introspection and frame access as `TOP`. Check compute parts against an allowlist (section 12.2). Enforce at the boundary. |
+| G13 | No `clock` or `entropy` scope. Reading the time or random numbers is not reported. | Code that is not deterministic can look pure. | Add both scopes to the table (section 12.2). |
 
 ## 10. Test results
 
@@ -243,16 +245,109 @@ These parts are decided in design and not built.
 
 | Part | Purpose |
 |---|---|
-| **Transparency log** | Append-only Merkle log of every admission, vouch, revocation and key change. The package root goes here. |
+| **Transparency log** | Append-only Merkle log of every admission, result, vouch, revocation, key change and policy change. The package root goes here. Format: section 12.1. |
 | **Independent builders** | At least k of n builders on different operators, clouds and keys rebuild each release from a pinned commit. They must agree on the digest before admission. A shared cache between builders defeats independence, so admission always rebuilds fresh. |
 | **Witnesses** | Independent parties that cosign each log head after checking it extends the previous one. Stops the operator from showing different histories to different clients. |
 | **Admission rules** | Pinned repository identity and commit, no binary blobs, no install or startup hooks, no unbounded dynamic code, scope declared and enforced. |
-| **Host-enforced scope** | A sandbox (WebAssembly Component Model is the intended runtime) grants only declared scope. The analyzer's output is advice; enforcement is the guarantee. |
+| **Host-enforced scope** | A sandbox (WebAssembly Component Model is the intended runtime) grants only declared scope. The analyzer's output is advice; enforcement is the guarantee. Design: section 12.2. |
 | **Vouches and deposits** | A reviewer, human or AI, signs an evidence bundle and locks a deposit behind it. A proven breach pays the finder. A vouch attaches to a node or subtree hash so that unchanged subtrees keep their earlier vouch. |
 | **Work frontier** | For a root, the list of nodes that lack a valid verdict for each required check. Agents cover that list and nothing else. |
 | **Data artifact class** | Large non-code files (model weights, data tables) with allowed formats, size limits and pinned digests. |
 | **Patch lane** | An emergency path from an upstream fix to a vouched garden release within hours. |
 | **Client gate** | A lockfile check and an agent tool that refuse unvouched digests. |
+
+### 12.1 Transparency log format [spec]
+
+Algobank reuses existing open specifications for its log. It does not invent a format.
+
+**Two different Merkle trees.** The code Merkle tree (one per package, section 4) identifies code; its root is a value inside a log entry. The log Merkle tree (one, global, append-only) records entries; its root proves that no past entry was changed or removed.
+
+| Part | Format |
+|---|---|
+| Tree hashing | RFC 6962 / RFC 9162: leaf hash = SHA-256(0x00 ‖ entry bytes), interior hash = SHA-256(0x01 ‖ left ‖ right). |
+| Digests | Full SHA-256 everywhere. The 12-character hashes in the v0.1 prototype are for readable output only (G9). |
+| Signed tree head | C2SP `tlog-checkpoint` in `signed-note` format: the log's origin name, the tree size and the root hash, followed by signature lines. |
+| Witness cosignatures | C2SP `tlog-cosignature`, collected with the C2SP `tlog-witness` protocol. A client accepts a checkpoint only when k of n witnesses have cosigned it. This stops the operator from showing different histories to different clients. |
+| Serving | C2SP `tlog-tiles`: the tree is published as static, cacheable files, so clients, witnesses and monitors can fetch proofs from a plain web server or CDN. Sigstore's Rekor v2 runs on this tile-based model. |
+| Entry encoding | JSON canonicalized with RFC 8785 (JCS), so one entry always has one byte sequence and one hash. Large evidence (logs, corpora, reports) stays outside the log and is referenced by its digest. |
+
+**Entry kinds.**
+
+| Kind | Required content |
+|---|---|
+| `admission` | Package name and version, artifact SHA-256, source repository and commit, code Merkle root, declared and detected scope per module, scope root, analyzer root and Python version, builder signatures, policy version. |
+| `result` | Code Merkle root of the package, a Merkle root over the per-node results in this batch, check name, tool digest and version, evidence digest, submitter signature. |
+| `vouch` | Node or subtree hash, the evidence it relies on, reviewer signature. Added with the bank layer. |
+| `revocation` | The hash being revoked, the reason, a reference to the proof. |
+| `key` | A submitter, builder, witness or log key added, rotated or retired. |
+| `policy` | A new version of the evidence policy per scope (section 12.2). |
+
+**Results are batched.** One `result` entry covers all nodes of one package for one check, through a Merkle root over the per-node outcomes. A client proves a single node's result with an inclusion proof into that batch. One entry per node per check would grow the log by thousands of entries per release.
+
+**Submission control.** Every entry is signed by a registered submitter key. The log rate-limits per submitter, following the Sigsum model, where rate limits are tied to the submitter (by domain or token) and not to the entry content. The log checks signatures and format only. It does not judge whether an entry is true; monitors and Algobank's result verification (section 1, "The core") do that.
+
+**Verification of admissions.** Every input to the analyzer is in the admission entry: the artifact digest, the analyzer root and the Python version. Any monitor can rerun the analyzer and compare the code root and scope. A bug found later in the analyzer identifies exactly which admissions to recheck.
+
+**Example entries** (digests shortened):
+
+```json
+{"kind": "admission", "package": "dexweb", "version": "4.2.5",
+ "artifact_sha256": "…", "source": {"repo": "https://github.com/matrixdex/dexweb", "commit": "…"},
+ "code_root": "…", "scope": {"dexweb.dexgen": ["file"], "dexweb.dexweb": ["file", "process"]},
+ "scope_root": "…", "analyzer": {"name": "pkgmerkle", "root": "…", "python": "3.14"},
+ "builders": [{"id": "builder-a", "sig": "…"}, {"id": "builder-b", "sig": "…"}], "policy_version": 1}
+
+{"kind": "result", "code_root": "…", "results_root": "…",
+ "check": {"name": "fuzz", "tool_digest": "…", "version": "…"},
+ "evidence_sha256": "…", "submitter": "…", "sig": "…"}
+```
+
+**Open question: lookups and revocation.** An append-only log proves that an entry exists. It cannot prove that no revocation exists for a hash. Clients that must know "is this hash revoked?" need either monitors that scan the log, or an index that is itself committed to by the checkpoint (a verifiable map). This choice is open.
+
+### 12.2 Scope enforcement and compute/effect separation [spec]
+
+**Goal.** Some parts only compute. Others read files, use the network or start processes. Keeping them separate lets reviewers spend their effort on the small parts with higher scope, while pure compute parts need lighter review.
+
+**What v0.1 supports today.**
+
+| Piece | Status |
+|---|---|
+| Detect each function's scope and roll it up through calls | Built |
+| Show when compute code calls effectful code (the roll-up exposes it) | Built |
+| Scope report per module | Trivial to add from current output |
+| Declared scope per module | Missing |
+| Admission rule: detected scope must not exceed declared scope | Missing |
+| Rule that compute parts must not reach effects | Missing |
+| Detection that introspection cannot evade | Missing (G12) |
+| Enforcement at run time | Missing |
+
+dexweb 4.2.5 shows why the split matters: `dexweb.dexgen` has scope `file` with 7 of 22 functions pure, and `dexweb.dexweb` has scope `file, process` with 1 of 11 pure. Pure and effectful code share modules, so a reviewer cannot skip either.
+
+**Design.**
+
+1. **Two kinds of part.** A *compute* part declares no scope: no effectful imports, no `TOP`, no introspection, no clock and no randomness. An *effect* part declares a narrow scope with parameters, for example "file: read under `./data`" or "network: `api.example.com:443`". Effect parts should be small.
+2. **Effects flow in as arguments.** Compute code receives what it needs (data, a reader, a client) from its caller and never reaches out by itself. Authority is then visible where the caller wires the parts together. This is the "functional core, imperative shell" pattern.
+3. **A manifest.** Each package declares the scope of each module in a file such as `algobank.toml`. Admission rejects any module whose detected scope exceeds what it declares. Unused declared scope is reported, so declarations stay minimal.
+4. **New scopes.** Add `clock` (time and date reads) and `entropy` (random numbers, `os.urandom`, `uuid`) to the scope table. A compute part that reads either is not deterministic, and its results cannot be replayed (G13).
+5. **Compute parts are checked by allowlist, not denylist.** A compute part may import only from a list of pure standard library modules and may not use dunder introspection. A denylist of dangerous names will always miss something. An allowlist fails safe.
+6. **The enforcement unit is the part, not the Python module.** Python cannot isolate one module from another inside a single process: any code can reach any object. So enforcement happens at a boundary between parts, and calls across it are serialized. The split must be coarse enough to make that cost acceptable.
+7. **Boundary mechanisms.**
+   - *Long term:* each part is a WebAssembly component. A compute component gets no imports. An effect component gets only the WASI interfaces it declared (for example, the file system limited to one pre-opened directory). `componentize-py` builds Python components. Pure Python is well supported; packages with C extensions are only partly supported, and CPython's `ssl` module is not available inside a component.
+   - *Near term:* each part runs in its own process. Compute processes are denied file and network access by the operating system: Linux Landlock restricts files, and TCP connect and bind from ABI version 4 (Linux 6.7). Older kernels silently ignore the network rules, so the host must check the Landlock ABI version before relying on them. seccomp can further limit system calls.
+   - *Not a boundary:* Python audit hooks (PEP 578). The PEP states that they are not a sandbox. They are for observation only, as in section 10.1.
+8. **Review policy by scope.** The evidence policy (section 1, "The core") sets what each scope requires. A compute part might need tests and a result from the static check. An effect part with `network` might also need a fuzz result and a reviewer's vouch. The policy is versioned and logged (`policy` entries, section 12.1).
+
+**References.**
+[RFC 6962](https://www.rfc-editor.org/rfc/rfc6962) ·
+[RFC 9162](https://www.rfc-editor.org/rfc/rfc9162) ·
+[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) ·
+[C2SP specifications](https://github.com/C2SP/C2SP/) ·
+[Rekor v2](https://blog.sigstore.dev/rekor-v2-ga/) ·
+[Sigsum design](https://git.sigsum.org/sigsum/tree/doc/design.md) ·
+[PEP 578](https://peps.python.org/pep-0578/) ·
+[componentize-py](https://www.fermyon.com/blog/introducing-componentize-py) ·
+[ssl in WASI components](https://urllib3future.readthedocs.io/en/latest/wasi.html) ·
+[Landlock networking, Linux 6.7](https://phoronix.com/news/Landlock-Networking-Linux-6.7)
 
 ## 13. How to run v0.1
 
@@ -287,5 +382,8 @@ The wheels are parsed and never run.
 2. Fix G2 and G3 so the `TOP` rule matches decision 4.
 3. Add inclusion proofs and the full digest, and record the interpreter version with each root (G11).
 4. Run the release-history test on two or three larger, multi-author packages.
-5. Stand up a minimal transparency log and record the analyzer's root as its first entry.
+5. Stand up a minimal transparency log in the C2SP formats (section 12.1) and record the analyzer's root as its first entry.
 6. Write the admission checker as code. Section 12 lists its rules.
+7. Fix G12 and G13, and add the per-module scope report.
+8. Add the scope manifest and the check that detected scope does not exceed declared scope (section 12.2).
+9. Prototype the near-term boundary: a compute part in its own process under Landlock, with the ABI version checked.
