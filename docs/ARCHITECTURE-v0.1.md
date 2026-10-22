@@ -1,229 +1,385 @@
-# Algobank v0.1: technical architecture reference
+# Algobank architecture
 
-This file records what Algobank v0.1 is, what was built and tested, and what is still only a plan. Each part carries a status:
+Version 0.1 · Python 3.14
+
+This document is the reference for Algobank's design. It describes what Algobank is, how each part works, what is implemented, and what is specified but not yet built.
+
+Status markers:
 
 - **[built]** implemented in `v0.1/` and tested.
-- **[spec]** decided in design, not implemented in v0.1.
+- **[spec]** specified in this document, not yet implemented.
 
-Code in this release: `v0.1/pkgmerkle.py` (the analyzer), `v0.1/synth_demo.py` (a synthetic multi-module test), `v0.1/dexweb_v2.py` (a release-history test on a real package). The last file was called `dexweb_v3.py` in the request; the file that was run and tested is `dexweb_v2.py`.
+## 1. Overview
 
-## 1. What Algobank is
+Algobank is a curated library of software parts, called the garden. Every part shows what it can do, and parts compose into larger programs without gaining hidden powers. Each part is identified by a content hash, so any change is exact and visible, and work already done on unchanged parts is reused.
 
-Algobank is a curated library of software parts (a "garden") in which every part shows what it can do, and in which parts compose into larger programs without gaining hidden powers. Each part is identified by a content hash, so a change to a part is visible and earlier checks of unchanged parts can be reused.
-
-### The core
+### 1.1 The core
 
 Algobank's core, without banking and insurance, has three parts:
 
 1. **Identity.** A code Merkle tree gives each package and each function a hash, so changes are exact and earlier work can be reused. [built]
 2. **Scope.** What the code can do is visible, and dynamic code is `TOP`. [built]
-3. **A place to attach results by hash.** Any party can publish a signed result about a node: a test run, a fuzz run, an AI review, a leak check. Algobank stores it against the hash and reuses it while the hash is unchanged. [spec]
+3. **Results by hash.** Any party can publish a signed result about a node: a test run, a fuzz run, an AI review, a leak check. Algobank stores it against the hash and reuses it while the hash is unchanged. [spec]
 
-Algobank owns a small set of core checks: computing identity and scope, the admission gates, verifying submitted results (signature, hash binding, sampled reruns), and replaying breach proofs. It also sets the policy for which evidence each scope requires. All other checks (tests, fuzzers, linters, reviews) are external tools whose signed results attach to node hashes. Algobank runs a reference set of them at the start, so the store is not empty.
+### 1.2 What Algobank owns
 
-Because each result is tied to a hash and not to a pipeline step, external checks are independent, run in any order, and can be added without changing the core.
+Algobank owns a small set of core checks:
 
-The bank layer (deposits, penalties, interest) sits on top of this core. It is not part of v0.1. See section 12.
+- computing identity and scope;
+- the admission gates (section 7);
+- verifying submitted results: signature, hash binding and sampled reruns (section 6);
+- replaying breach proofs (bank layer).
 
-## 2. The five decisions v0.1 builds on
+It also sets the evidence policy: which results each scope and tier requires.
 
-1. **Scope is always visible.** What a package can do must be shown. "Scope" and "capability" mean the same thing here. Scopes in v0.1: `file`, `network`, `process`, `env`, `native`, and `TOP`. [built]
-2. **Code Merkle trees replace the code graph.** A node's hash covers its own syntax tree and the hashes of the code it calls. Codegraph is not used. [built]
-3. **Cross-module calls are resolved. One package is one Merkle tree.** A package has one root hash. [built]
-4. **Dynamic imports, reflection and monkey-patching are assigned `TOP`.** `TOP` means the code may do anything. It spreads to every caller. [built, with gaps listed in section 9]
-5. **The analyzer is the first garden part.** `pkgmerkle.py` is small, pure, has no dependencies outside the Python standard library and declares no scopes. Its root hash is its identity (section 11). [built as an identity; no log exists yet]
+All other checks (tests, fuzzers, linters, reviews) are external tools whose signed results attach to node hashes. Because a result is tied to a hash and not to a pipeline step, external checks are independent, run in any order, and can be added without changing the core. Algobank runs a reference set of them at the start, so the result store is not empty.
 
-## 3. Terms
+### 1.3 Design principles
+
+1. Scope is always visible. "Scope" and "capability" mean the same thing.
+2. Identity comes from code Merkle trees. One package is one tree with one root.
+3. Calls across modules are resolved. Dynamic imports, reflection and monkey-patching are `TOP`.
+4. Static analysis sorts and flags. A boundary outside the code enforces.
+5. Every enforcement step fails closed: if a restriction cannot be applied and verified, the part does not run.
+6. Existing standards and tools are reused wherever they fit.
+
+### 1.4 Layers above the core
+
+Banking and insurance (vouches, deposits, penalties, interest, payouts) sit on top of the core. They are not part of v0.1. Section 9 lists them.
+
+## 2. Terms
 
 | Term | Meaning |
 |---|---|
-| **Package** | A set of Python source files analyzed together. One package has one Merkle tree. |
+| **Package** | A set of source files analyzed together. One package has one code Merkle tree. |
+| **Part** | A package admitted to the garden. The unit that is confined and run. |
 | **Node** | A function or method (`module:qualname`), or a module's top-level code (`module:<module>`). |
-| **Own hash** | Hash of a node's cleaned-up syntax tree alone. |
-| **Merkle hash** | Own hash combined with the Merkle hashes of every node it calls, and with the pins of the outside packages it uses. |
-| **Leaf** | `H(node_id + "=" + merkle_hash)`. It commits to the public name and the content. |
-| **Root** | A binary Merkle root over the sorted leaves. This is the package identity. |
-| **Scope** | A power the code can use. Each node has its own scopes and a rolled-up set that adds the scopes of everything it calls. |
-| **Scope root** | A hash of the sorted set of all scopes in the package. |
-| **TOP** | Unknown or unbounded scope. Absorbs everything above it. |
+| **Own hash** | The hash of a node's normalized syntax tree alone. |
+| **Merkle hash** | The own hash combined with the Merkle hashes of every node it calls and the pins of outside packages it uses. |
+| **Leaf** | `H(node_id + "=" + merkle_hash)`. It commits to the node's public name and its content. |
+| **Code root** | The binary Merkle root over a package's sorted leaves. The package's identity. |
+| **Scope** | A power the code can use, such as `file` or `network`. |
+| **Scope root** | The hash of the sorted set of all scopes in a package. |
+| **`TOP`** | Unknown or unbounded scope. It absorbs every other scope. |
 | **Pin** | A fixed identifier for an outside dependency. Pins are part of the hash. |
+| **Compute part** | A part that declares no scope. |
+| **Effect part** | A part that declares one or more narrow scopes. |
+| **Tier** | How a part is confined at run time: component tier or native tier (section 5.2). |
+| **Result** | A signed statement by a check about a node or package hash. |
 
-`H` is SHA-256, truncated to 12 hex characters in v0.1. This is for readable output. Production use needs the full digest.
+## 3. Identity: the code Merkle tree [built]
 
-## 4. The code Merkle tree [built]
-
-### 4.1 Nodes
+### 3.1 Nodes
 
 - Every function and method, at any class depth. Async functions count as functions.
-- Each module's top-level code, called `<module>`. This is the module with every function body removed, so it keeps imports, constants, class headers and any statement that runs at import time.
-- Nested functions and lambdas are not separate nodes. They are part of the parent's tree.
+- Each module's top-level code, called `<module>`: the module with every function body removed. It keeps imports, constants, class headers and any statement that runs at import time.
+- Nested functions and lambdas are part of their parent node.
 
-### 4.2 Cleaning up a function before hashing
+### 3.2 Normalization
 
-The goal is that changes with no meaning do not change the hash. The cleaned tree is dumped without line numbers.
+Changes with no meaning must not change the hash. The normalized tree is serialized without line numbers.
 
 | Item | Treatment |
 |---|---|
-| Function name | Replaced by `_` (the name lives in the leaf, not in the own hash) |
-| Parameters and local variables | Renamed by position: `_0`, `_1`, and so on |
-| Argument annotations | Removed |
-| Docstring (first statement, if a string) | Removed |
-| Decorators, default values, return annotations | Kept |
-| Global names, attributes, import aliases, string and number constants | Kept as written |
+| Function name | Replaced by `_`. The name is in the leaf, not in the own hash. |
+| Parameters and local variables | Renamed by position: `_0`, `_1`, and so on. |
+| Argument annotations | Removed. |
+| Docstring (first statement, if a string) | Removed. |
+| Decorators, default values, return annotations | Kept. |
+| Global names, attributes, import aliases, constants | Kept as written. |
 
-Rule: if there is doubt whether something changes behavior, keep it in the hash. A reformat, a pure rename of locals, or a docstring edit does not change the hash. This is tested.
+Rule: if there is doubt whether something changes behavior, it stays in the hash. Reformatting, renaming locals and editing docstrings do not change the hash.
 
-### 4.3 Merkle hash and cycles
+### 3.3 Merkle hash and cycles
 
-For a node with no cycles: `merkle = H(base + own)`, where `base` combines the node's own hash, the Merkle hashes of every callee, and the sorted pins of outside packages the node uses.
+For a node outside any cycle, `merkle = H(base + own)`, where `base` combines the node's own hash, the Merkle hashes of its callees, and the sorted pins of outside packages it uses.
 
-Calls can form cycles (recursion, mutual recursion). The graph is reduced to strongly connected components (Tarjan). Each component is hashed as one unit, then each member hashes that value with its own hash.
+Recursion and mutual recursion form cycles. The call graph is reduced to strongly connected components (Tarjan's algorithm). Each component is hashed as one unit, and each member then combines that value with its own hash.
 
-### 4.4 Package root
+### 3.4 Code root
 
 1. Compute every node's leaf.
 2. Sort the leaves.
-3. Pair-hash upward (duplicate the last leaf when a level has an odd count) to one root.
+3. Hash pairs upward, duplicating the last leaf of an odd-sized level, until one root remains.
 
-The root commits to names as well as content, because names are the public interface. Renaming a function changes the root. Reformatting does not. Inclusion proofs (proving that one node is in a root) are possible with this tree but are not implemented.
+The root commits to names and content, because names are the public interface. Renaming a function changes the root; reformatting does not.
 
-## 5. Resolving calls [built]
+### 3.5 Call resolution
 
-The analyzer builds one call graph for the whole package.
+The call graph covers the whole package.
 
 | Case | Handling |
 |---|---|
 | `import a.b`, `import a.b as x` | Binds a module. Attribute chains resolve to the longest matching module, then the function. |
-| `from a.b import f as g` | Binds a symbol (function, class, or submodule). |
-| Relative imports (`from . import x`, `from .y import z`) | Resolved from the importing module's package. |
-| Instantiating a class | Resolves to that class's `__init__`. |
-| `self.m()` and `cls.m()` | Resolves to the method in the same class. If missing, falls back to the next row. |
-| A call on an object of unknown type, `obj.m()` | Over-approximation: an edge to every method named `m` in the package. This is the class-hierarchy fallback. It may invalidate more than needed. It never invalidates less. |
-| Module top-level code | Has edges to the top-level code of every package module it imports, and to every package function it calls at import time. |
+| `from a.b import f as g` | Binds a function, class or submodule. |
+| Relative imports | Resolved from the importing module's package. |
+| Instantiating a class | Resolves to the class's `__init__`. |
+| `self.m()`, `cls.m()` | Resolves to the method in the same class, else falls back to the next row. |
+| `obj.m()` on an object of unknown type | An edge to every method named `m` in the package. This over-approximates: it may invalidate more than needed, never less. |
+| Module top-level code | Edges to the top-level code of every package module it imports, and to every package function it calls at import time. |
 | Imports inside a function | Added to that function's name table. |
-| `from x import *` | Flagged `star-import`. Names it brings in are not resolved. See section 9. |
+| `from x import *` | Flagged `star-import`. The names it brings in are not resolved. |
 
-Calls into outside packages are not followed. They count toward scopes (section 6) and pins (section 7).
+Calls into outside packages are not followed. They contribute to scope (section 4) and pins (section 3.6).
 
-## 6. Scopes [built]
+### 3.6 Dependencies and pins
 
-### 6.1 How a node gets a scope
+Each outside package a node uses becomes a pin in that node's hash. v0.1 reads dependency names from wheel metadata (`Requires-Dist`) and maps import names to distribution names where they differ, for example `bs4` to `beautifulsoup4`. [built]
 
-Scopes come from a table keyed by where the name was imported from:
+A garden part may depend only on other garden parts, pinned by digest. v0.1 records pins but does not enforce this. [spec]
+
+### 3.7 Hash function
+
+`H` is SHA-256. The v0.1 prototype truncates digests to 12 hex characters for readable output; production uses full digests. Hashes come from Python's `ast.dump`, whose format can differ between interpreter versions, so the interpreter version is recorded with every root.
+
+## 4. Scope
+
+### 4.1 The scope set
+
+| Scope | Covers | Detected in v0.1 | Component tier | Native tier |
+|---|---|---|---|---|
+| `file` | Reading, writing, listing or deleting files | yes | enforced | enforced |
+| `network` | Any network connection or listening socket | yes | enforced | enforced |
+| `process` | Starting or signaling other processes | yes | enforced | enforced |
+| `env` | Reading or changing environment variables | yes | enforced | enforced |
+| `native` | Loading native code (`ctypes`, `cffi`, C extensions) | yes | not allowed | native tier only |
+| `clock` | Reading the time or date | no (G13) | enforced | detected only |
+| `entropy` | Reading random numbers, `os.urandom`, `uuid4` | no (G13) | enforced | detected only |
+| `TOP` | Unknown or unbounded behavior | yes | must be resolved or rejected | must be resolved or rejected |
+
+`clock` and `entropy` are scopes because results are reused only while code is deterministic, because a clock is a common trigger for dormant malicious behavior, and because key generation depends on the quality of its random source.
+
+Enforcement in both tiers is [spec] (section 5).
+
+### 4.2 Detection [built]
+
+Scopes come from a table keyed by where a name was imported from.
 
 | Source | Scope |
 |---|---|
 | `socket`, `ssl`, `urllib`, `http`, `requests`, `httpx`, `aiohttp`, `ftplib`, `smtplib`, `websockets` | `network` |
-| `subprocess`, `multiprocessing`, and `os.system`, `os.popen`, `os.execv`, `os.execl`, `os.execvp`, `os.spawnl`, `os.fork`, `os.kill` | `process` |
-| `open(...)`, `shutil`, `tempfile`, `glob`, and `os.remove`, `os.unlink`, `os.rmdir`, `os.rename`, `os.replace`, `os.makedirs`, `os.mkdir`, `os.listdir`, `os.scandir`, `os.walk`, `os.chmod` | `file` |
-| Any `.write_text .read_text .write_bytes .read_bytes .unlink .rmtree .mkdir .touch` | `file` (matched by method name, so a heuristic) |
+| `subprocess`, `multiprocessing`; `os.system`, `os.popen`, `os.execv`, `os.execl`, `os.execvp`, `os.spawnl`, `os.fork`, `os.kill` | `process` |
+| `open()`, `shutil`, `tempfile`, `glob`; `os.remove`, `os.unlink`, `os.rmdir`, `os.rename`, `os.replace`, `os.makedirs`, `os.mkdir`, `os.listdir`, `os.scandir`, `os.walk`, `os.chmod` | `file` |
+| Methods named `.write_text`, `.read_text`, `.write_bytes`, `.read_bytes`, `.unlink`, `.rmtree`, `.mkdir`, `.touch` | `file` (matched by name) |
 | `os.environ`, `os.getenv`, `os.putenv` | `env` |
 | `ctypes`, `cffi` | `native` |
 
-### 6.2 Roll-up
+### 4.3 Roll-up [built]
 
-A node's rolled-up scope is its own scopes plus the rolled-up scopes of everything it calls, across modules. A package's scope is the union over all nodes. The scope root hashes that set.
+A node's rolled-up scope is its own scope plus the rolled-up scope of everything it calls, across modules. A package's scope is the union over its nodes, and the scope root hashes that set. Any change that adds a scope anywhere changes the scope root, which pinpoints where a new power entered.
 
-A change that adds a scope to any node changes the scope root. In the dexweb test this showed exactly where a new power entered (section 10).
-
-## 7. Dependencies and pins [built, partly]
-
-An outside package that a node uses becomes a pin in that node's hash. v0.1 reads names from `Requires-Dist` in wheel metadata and maps the import name to the distribution name for known mismatches (`bs4` to `beautifulsoup4`).
-
-In the dexweb test every dependency was declared without a version, so each pin was `unpinned`. A real garden part may depend only on other garden parts, pinned by digest. This is **[spec]**: v0.1 records pins but does not enforce them.
-
-## 8. Dynamic code is `TOP` [built, with gaps]
-
-### 8.1 What produces `TOP`
+### 4.4 `TOP` [built]
 
 | Construct | Flag | Effect |
 |---|---|---|
-| Import with a computed name (`importlib.import_module(x)`, `__import__(x)`) | `dyn-import` | `TOP`, and an edge to every module in the package, so any module change invalidates the node |
-| Entry-point loading (`entry_points`) | `dyn-import` | Same |
+| Import with a computed name (`importlib.import_module(x)`, `__import__(x)`), entry-point loading | `dyn-import` | `TOP`, and an edge to every module in the package, so any module change invalidates the node |
 | `getattr`, `setattr`, `delattr` with a computed name; `globals()`, `locals()`, `vars()` | `dyn-attr` | `TOP` |
-| `eval`, `exec`, `compile`; `pickle`, `marshal`, `dill`, `shelve` load calls | `dyn-exec` | `TOP` |
-| Assigning an attribute on an imported module; storing into `sys.modules` | `dyn-patch` | `TOP` |
+| `eval`, `exec`, `compile`; loads from `pickle`, `marshal`, `dill`, `shelve` | `dyn-exec` | `TOP` |
+| Assigning an attribute of an imported module; writing to `sys.modules` | `dyn-patch` | `TOP` |
 
-Import with a literal name that is a package module is resolved as a normal import.
+An import with a literal name of a package module is resolved as a normal import.
 
-### 8.2 What `TOP` means for checks
+`TOP` spreads to every caller. A `TOP` node cannot earn a result such as "uses no network"; it can earn only results that hold regardless of what it does.
 
-- `TOP` spreads upward: any caller of a `TOP` node is `TOP`.
-- A `TOP` node cannot earn a verdict such as "uses no network". It can earn only verdicts that hold regardless of what it does.
-- Static analysis gives an upper bound. Runtime observation gives a lower bound (section 10.1). In the garden, enforcement by the host is the guarantee; the analyzer is for triage and for cache keys.
+### 4.5 Compute and effect parts [spec]
 
-## 9. Known gaps in v0.1
+Separating computation from effects lets reviewers concentrate on the small parts that touch files, the network or processes, while pure compute parts need lighter review.
 
-| # | Gap | Effect | Suggested fix |
-|---|---|---|---|
-| G1 | Functions do not depend on their module's top-level code. A change to a module-level constant does not change the hash of a function that reads it. | A stale verdict can survive. **This is a soundness gap.** | Add an edge from each function to the module-level names it reads, or to its `<module>` node. The second choice over-invalidates, so measure the cost on the dexweb history first. |
-| G2 | `__getattr__` definitions and `from x import *` are flagged but do not produce `TOP`. | Contradicts decision 4. | Add the two flags to the `TOP` rule. |
-| G3 | Computed `getattr` targets are not added to the hash. | `cli.dispatch` in the synthetic test was `TOP` but was not invalidated when `util.clean` changed, though it can reach it at run time. | Either forbid unbounded dynamic code in admission, or require an explicit list of allowed targets that joins the hash. |
-| G4 | Literal imports of outside modules (`import_module("socket")`) do not add that module's scope. | Scope is under-reported. | Map literal outside imports through the scope table. |
-| G5 | The scope table is short, Python only, and partly matched by method name. | Misses libraries it does not list. | Build a proper API-to-scope database per language. |
-| G6 | Native extensions, `ctypes`, and anything below the Python level are invisible to the hooks and the parser. | Under-reported. | Garden admission refuses `native` without a separate build vouch. |
-| G7 | Methods in base classes are reached only by the name-based fallback. | Over-approximates. | Real class-hierarchy resolution. |
-| G8 | No inclusion proofs. | Cannot prove one node is in a root without the full list. | Standard Merkle audit paths over the sorted leaves. |
-| G9 | The digest is truncated to 12 hex characters. | Not collision-safe for production. | Use the full SHA-256. |
-| G10 | Dynamic behavior that avoids every listed pattern (functions stored in dictionaries and called by key, for example). | Not detected. | Runtime observation and host enforcement. |
-| G11 | Hashes come from Python's `ast.dump`, whose output can change between interpreter versions. v0.1 targets Python 3.14 only. | The same source could get a different root under another Python version. | Record the interpreter version with every root. Add a test that compares roots across supported versions. Longer term, hash a version-independent serialization of the tree. |
-| G12 | Introspection through dunder attributes (walking class hierarchies or function globals) can reach effectful functions without importing them. v0.1 reports such code as scope none, with no flags. | A compute part can hide real effects. **This is a soundness gap.** | Treat dunder introspection and frame access as `TOP`. Check compute parts against an allowlist (section 12.2). Enforce at the boundary. |
-| G13 | No `clock` or `entropy` scope. Reading the time or random numbers is not reported. | Code that is not deterministic can look pure. | Add both scopes to the table (section 12.2). |
+1. **Two kinds of part.** A compute part declares no scope: no effectful imports, no `TOP`, no introspection, no clock and no randomness. An effect part declares narrow scopes with parameters, for example `file: read ./data` or `network: api.example.com:443`. Effect parts should be small.
+2. **Effects flow in as arguments.** Compute code receives data, readers, clients, the current time or a random generator from its caller and never reaches out itself. Authority is then visible where parts are wired together ("functional core, imperative shell").
+3. **Manifest.** Each package declares the scope of each module in a manifest such as `algobank.toml`. Admission rejects any module whose detected scope exceeds its declared scope, and reports declared scope that is never used.
+4. **Allowlist for compute parts.** A compute part may import only from a list of pure standard-library modules and may not use dunder introspection or frame access. An allowlist fails safe; a denylist of dangerous names always misses something.
+5. **Review by scope.** The evidence policy (section 6.4) requires more evidence as scope grows.
 
-## 10. Test results
+## 5. Enforcement [spec]
 
-### 10.1 Synthetic package (`synth_demo.py`)
+### 5.1 Principle
 
-An eight-file package with a dynamic plugin loader, a computed `getattr` dispatcher, and two plugins that use files and the network.
+Static analysis decides where to look and what to flag. It does not enforce. Python cannot isolate one module from another inside a single process, so enforcement happens at a boundary between parts, and calls across that boundary are serialized. Parts must therefore be coarse enough for that cost to be acceptable.
 
-| Test | Result |
+### 5.2 Tiers
+
+| | Component tier | Native tier |
+|---|---|---|
+| Boundary | WebAssembly component | Confined operating-system process |
+| Platforms | Linux, macOS, Windows | Linux; other systems run the host in a Linux VM |
+| Scopes enforced | All, including `clock` and `entropy` | `file`, `network`, `process`, `env`; `clock` and `entropy` detected only |
+| Typical parts | Pure-Python code | Packages with C extensions, such as NumPy |
+| Status | The only long-term boundary | For parts that cannot yet run as components |
+
+**Component tier.** A part runs as a WebAssembly component. A compute component receives no imports. An effect component receives only the WASI interfaces it declared, for example the file system limited to one pre-opened directory. `componentize-py` builds Python components; pure Python is well supported, packages with C extensions are only partly supported, and CPython's `ssl` module is not available inside a component.
+
+**Native tier.** A part runs in its own confined process (section 5.3). Packages with C extensions stay in this tier until a component build exists. Emscripten builds (Pyodide) already run NumPy, but target a JavaScript host rather than WASI components; WASI builds of NumPy are not yet available.
+
+A part's tier is recorded at admission and visible to agents and reviewers. The evidence policy depends on it.
+
+### 5.3 Native-tier confinement
+
+The Linux kernel enforces every restriction. Algobank's host only configures them, and none can be undone from inside.
+
+| Layer | Effect |
 |---|---|
-| Edit `util.clean()`; per-file analysis | 1 node changed |
-| Same edit; whole-package analysis | 5 nodes changed: `util.clean`, `store.save`, `plugins.a.run`, `core.run`, `core.shout` |
-| `core.load_plugin` (computed import); `cli.dispatch` (computed `getattr`) | Both `TOP` |
-| Edit `plugins/b.py` | `plugins.b.run` and `core.run` changed |
-| Static scope at `core.run` | `TOP`, `file`, `network` |
-| Runtime observation (Python audit hook), plugin a | Observed `file` only |
-| Runtime observation, plugin b | Observed `network` only |
+| Namespaces (user, mount, network, PID, IPC) | The part sees only its mounted files, no network interfaces and only its own processes. An empty network namespace blocks every protocol. |
+| Privileges | `no_new_privs` set and all capabilities dropped; the part cannot gain rights. |
+| System-call filter (seccomp) | An allowlist of the system calls the runtime needs. Internet sockets, new namespaces, process tracing, kernel-module loading and, after start-up, starting programs are refused. |
+| File rules (Landlock) | A second file layer under the mount namespace. A layer, never the boundary. |
+| Resource limits (cgroups, rlimits) | Caps on memory, CPU, process count and open files. |
+| gVisor or a microVM (Firecracker) | For effect parts and parts that parse untrusted input: the part talks to a small user-space kernel or a minimal VM instead of the host kernel. |
 
-The static result is an upper bound, and the runtime result is what happened on one path.
+### 5.4 Launch sequence
 
-### 10.2 Real package: dexweb (`dexweb_v2.py`)
+1. The host builds a confinement profile from the part's declared scope in its admission record.
+2. The host starts the process with namespaces, mounts, a cleared environment and dropped privileges.
+3. A small trusted runner inside the process applies the final system-call filter, then verifies its own state: no capabilities, filter active, no network interfaces, expected mounts. If any check fails, it exits without loading the part.
+4. The runner imports the part, including its native extensions.
+5. Data enters and leaves only through a pipe, in a plain format checked against a schema.
+6. The digest of the confinement profile is recorded with the run.
 
-All 25 PyPI wheels of `dexweb` (0.0.1 through 4.2.5). Every file hash matched PyPI's record. Nothing from the package was executed.
+### 5.5 Two-way boundary
 
-| Measure | Value |
+The host treats a part's output as untrusted. Output is never unpickled or otherwise executed; it is parsed from a plain format and validated against a schema.
+
+### 5.6 Failing closed
+
+Every layer is verified, not assumed. When the kernel lacks a feature the profile needs, the part does not run. Landlock illustrates why: the kernel rejects rules it does not support, but best-effort libraries drop them silently, so the host checks the Landlock version before relying on it. Network rules need version 4 (Linux 6.7).
+
+### 5.7 Native-tier security rules
+
+Native code has no memory safety, and the analyzer cannot see the scope of compiled code. The native tier is therefore weaker than the component tier, and these rules apply:
+
+1. **Native only when measured performance requires it.**
+2. **Always confined.** A native part never runs outside the profile in section 5.3.
+3. **Nothing worth stealing.** The process holds no credentials, secrets or files beyond its declared scope.
+4. **Evidence for native code.** Reproducible builds by independent builders, fuzzing with memory-error detectors (sanitizers), hardened compiler settings, and a reviewer's vouch on the native source.
+5. **Sampled cross-checks.** Where a component build exists, a random sample of real calls is rerun on it and the outputs are compared. This detects wrong results from a compromised native part. Agreement shows correctness on the sampled inputs; it is not evidence that the native code is secure.
+6. **Untrusted input.** Native code that parses untrusted files or network data requires the component tier or substantially heavier evidence.
+7. **Memory-safe native code is preferred.** A Rust extension ranks above a C extension; `unsafe` blocks are reviewed specifically.
+
+### 5.8 Tools
+
+Confinement reuses existing tools: bubblewrap or nsjail for namespaces, seccomp and resource limits; gVisor and Firecracker for the stronger option. Algobank's own code is the runner, the mapping from declared scope to profile, the self-check, and recording the profile digest.
+
+Python audit hooks (PEP 578) are not a boundary. PEP 578 states that they are not a sandbox. They are used for observation only.
+
+## 6. Results and evidence [spec]
+
+### 6.1 Results by hash
+
+A result names the node or package hash it covers, the check (tool, tool digest and version), the outcome, the digest of its evidence, and the submitter's signature. A result stays valid while the hash it names is unchanged, so unchanged code is never rechecked. A result for a `TOP` node is limited to properties that hold regardless of its behavior.
+
+### 6.2 Verification of submitted results
+
+A store of signed results from any party is a target. Algobank accepts a result only if:
+
+1. the signature is valid and the submitter is registered;
+2. the result is bound to the correct hash and checker version;
+3. sampled reruns of deterministic checks reproduce it.
+
+### 6.3 Reference runner
+
+Algobank runs a reference set of external checks itself, so the store is not empty before other parties contribute.
+
+### 6.4 Evidence policy
+
+The policy states which results each scope and tier requires. A compute part in the component tier might need tests and the static checks; an effect part with `network` in the native tier might also need a fuzz result and a reviewer's vouch. The policy is versioned and every version is logged (section 8).
+
+### 6.5 Work frontier
+
+For a given code root, the work frontier is the set of nodes that lack a valid result for a required check. Agents and reviewers work on the frontier and nothing else.
+
+## 7. Admission [spec]
+
+A package becomes a part only when all gates pass:
+
+1. Repository identity and commit are pinned.
+2. At least k of n independent builders, on different operators, clouds and keys, rebuild the release from the pinned commit and agree on the digest. Admission always rebuilds fresh; builders never share a cache.
+3. No binary blobs in the source, and no install-time or startup hooks.
+4. Dependencies are garden parts, pinned by digest.
+5. No unresolved `TOP`. Dynamic behavior is either removed or limited to an explicit list of targets that joins the hash.
+6. Detected scope does not exceed declared scope (section 4.5).
+7. The tier is assigned and the confinement profile can be applied on the target platform.
+8. The evidence policy for the part's scope and tier is met.
+
+## 8. Transparency log [spec]
+
+Every admission, result, vouch, revocation, key change and policy change is recorded in an append-only log. The log reuses existing open specifications.
+
+### 8.1 Two trees
+
+The **code Merkle tree** (one per package, section 3) identifies code; its root is a value inside a log entry. The **log Merkle tree** (one, global, append-only) records entries; its root proves that no past entry was changed or removed.
+
+### 8.2 Format
+
+| Part | Specification |
 |---|---|
-| Median share of nodes unchanged vs the previous release | 88% by count, 74% by code size |
-| Vetting work across all releases when earlier verdicts are reused | 25% of the from-scratch cost |
-| Releases with no code change | 4.0.3, 4.0.4, 4.1.3, 4.1.4, 4.1.5, 4.1.6, 4.1.8, 4.2.2 |
-| Cross-module call edges | 0 (the two modules never import each other) |
-| `TOP` nodes | 0 |
-| Scope change | `process` first appeared at 4.2.3 (`subprocess.run` of git, in `dexweb.py`) |
-| Non-code change | 4.2.0 added a 200 KB data file |
-| Dependencies | Four, all unpinned |
+| Tree hashing | RFC 6962 / RFC 9162: leaf hash = SHA-256(0x00 ‖ entry bytes), interior hash = SHA-256(0x01 ‖ left ‖ right). |
+| Digests | Full SHA-256. |
+| Signed tree head | C2SP `tlog-checkpoint` in `signed-note` format: the log's origin, tree size and root hash, followed by signatures. |
+| Witness cosignatures | C2SP `tlog-cosignature`, collected through C2SP `tlog-witness`. Clients accept a checkpoint only when k of n witnesses have cosigned it, which prevents the operator from showing different histories to different clients. |
+| Serving | C2SP `tlog-tiles`: the log is published as static, cacheable files. Sigstore's Rekor v2 uses this model. |
+| Entry encoding | JSON canonicalized with RFC 8785. Large evidence is stored outside the log and referenced by digest. |
 
-This is one small package by one author. Do not generalize the percentages before more packages are measured.
+### 8.3 Entry kinds
 
-### 10.3 Self-analysis
+| Kind | Content |
+|---|---|
+| `admission` | Package name and version, artifact digest, source repository and commit, code root, declared and detected scope per module, scope root, tier, analyzer root and Python version, builder signatures, policy version. |
+| `result` | Code root, a Merkle root over the per-node results of the batch, check name, tool digest and version, evidence digest, submitter signature. |
+| `vouch` | Node or subtree hash, the evidence relied on, reviewer signature. |
+| `revocation` | The revoked hash, the reason, a reference to the proof. |
+| `key` | A submitter, builder, witness or log key added, rotated or retired. |
+| `policy` | A new version of the evidence policy. |
 
-`pkgmerkle.py` analyzed itself: 25 nodes, no scopes, no `TOP`, identical hashes on a second run. A one-line edit in `H()` moved only `H`, `Package._analyze` and `Package.__init__`.
+Example admission entry (digests shortened):
 
-## 11. The first garden part: the analyzer's own identity [built as an identity; not logged]
+```json
+{"kind": "admission", "package": "dexweb", "version": "4.2.5",
+ "artifact_sha256": "…", "source": {"repo": "https://github.com/matrixdex/dexweb", "commit": "…"},
+ "code_root": "…", "scope": {"dexweb.dexgen": ["file"], "dexweb.dexweb": ["file", "process"]},
+ "scope_root": "…", "tier": "native", "analyzer": {"name": "pkgmerkle", "root": "…", "python": "3.14"},
+ "builders": [{"id": "builder-a", "sig": "…"}, {"id": "builder-b", "sig": "…"}], "policy_version": 1}
+```
 
-`pkgmerkle.py` meets the admission rules the design favors: small, pure computation, no dependencies outside the standard library, no scopes, no `TOP`, no install-time code.
+### 8.4 Operation
 
-Identity of `v0.1/pkgmerkle.py` as shipped, computed with the file key `pkgmerkle.py`:
+- **Batched results.** One `result` entry covers all nodes of one package for one check through a Merkle root over the per-node outcomes. A single node's result is proven by an inclusion proof into the batch.
+- **Submission control.** Every entry is signed by a registered submitter key and rate-limited per submitter, as in Sigsum. The log checks signatures and format only; result verification (section 6.2) and monitors judge content.
+- **Reproducible admissions.** Every input to the analyzer is in the admission entry, so any monitor can rerun it and compare the code root and scope. A bug found in the analyzer identifies exactly which admissions to recheck.
+- **Open question: absence.** An append-only log proves that an entry exists, not that no revocation exists for a hash. Answering "is this hash revoked?" needs either monitors that scan the log or an index committed to by the checkpoint (a verifiable map).
+
+## 9. Planned layers
+
+| Layer | Purpose |
+|---|---|
+| Vouches and deposits | A reviewer, human or AI, signs an evidence bundle and locks a deposit behind it. A proven breach pays the finder. A vouch attaches to a node or subtree hash, so unchanged subtrees keep it. |
+| Data artifacts | Large non-code files (model weights, data tables) with allowed formats, size limits and pinned digests. |
+| Patch lane | A fast path from an upstream fix to an admitted garden release. |
+| Client gate | A lockfile check and an agent tool that refuse digests without the required evidence. |
+
+## 10. Implementation (v0.1)
+
+### 10.1 Files
+
+| File | Purpose |
+|---|---|
+| `v0.1/pkgmerkle.py` | The analyzer: code Merkle tree, call resolution, scope detection and roll-up, `TOP`, code root and scope root. Standard library only. |
+| `v0.1/synth_demo.py` | Test on a synthetic eight-file package with a dynamic plugin loader, a computed `getattr` dispatcher, and plugins that use files and the network. |
+| `v0.1/dexweb_v2.py` | Release-history test over every published wheel of the `dexweb` package. |
+
+Built: sections 3.1–3.5, 3.6 (recording pins), 3.7 (truncated digests), 4.2–4.4. Everything else is specified.
+
+### 10.2 First garden part
+
+`pkgmerkle.py` meets the admission rules the design favors: small, pure computation, no dependencies outside the standard library, no scope, no `TOP`, no install-time code. Its code root is its identity. It is a candidate part; no log, builders or witnesses exist yet to admit it.
 
 | Item | Value |
 |---|---|
-| Package root | `5af18aa47d8a` |
+| Code root | `5af18aa47d8a` |
 | Scope | none |
 | Scope root | `140bedbf9c3f` |
 | Nodes | 25 |
 | File SHA-256 | `e7edbf91da0cf836b93014ff7b03db0512ba53487de42ec7ccd84d29b46f50be` |
-
-Any edit to the file changes the root. This is a candidate vouched artifact, not a vouched one: there is no transparency log, no independent builder and no witness yet. The values above are only a record in this file.
+| Python | 3.14 |
 
 To recompute:
 
@@ -237,129 +393,41 @@ with open('pkgmerkle.py') as fh:
 print(p.root(), p.scope(), p.scope_root(), len(p.nodes))"
 ```
 
-The root depends on the output format of Python's `ast.dump`, so record the Python version with it. See gap G11.
+### 10.3 Validation
 
-## 12. Target architecture around v0.1 [spec]
+**Synthetic package** (`synth_demo.py`):
 
-These parts are decided in design and not built.
-
-| Part | Purpose |
+| Check | Result |
 |---|---|
-| **Transparency log** | Append-only Merkle log of every admission, result, vouch, revocation, key change and policy change. The package root goes here. Format: section 12.1. |
-| **Independent builders** | At least k of n builders on different operators, clouds and keys rebuild each release from a pinned commit. They must agree on the digest before admission. A shared cache between builders defeats independence, so admission always rebuilds fresh. |
-| **Witnesses** | Independent parties that cosign each log head after checking it extends the previous one. Stops the operator from showing different histories to different clients. |
-| **Admission rules** | Pinned repository identity and commit, no binary blobs, no install or startup hooks, no unbounded dynamic code, scope declared and enforced. |
-| **Host-enforced scope** | A sandbox (WebAssembly Component Model is the intended runtime) grants only declared scope. The analyzer's output is advice; enforcement is the guarantee. Design: section 12.2. |
-| **Vouches and deposits** | A reviewer, human or AI, signs an evidence bundle and locks a deposit behind it. A proven breach pays the finder. A vouch attaches to a node or subtree hash so that unchanged subtrees keep their earlier vouch. |
-| **Work frontier** | For a root, the list of nodes that lack a valid verdict for each required check. Agents cover that list and nothing else. |
-| **Data artifact class** | Large non-code files (model weights, data tables) with allowed formats, size limits and pinned digests. |
-| **Patch lane** | An emergency path from an upstream fix to a vouched garden release within hours. |
-| **Client gate** | A lockfile check and an agent tool that refuse unvouched digests. |
+| Edit `util.clean()`: nodes changed with whole-package resolution | 5 (`util.clean`, `store.save`, `plugins.a.run`, `core.run`, `core.shout`); per-file analysis finds only 1 |
+| Computed import and computed `getattr` | Both nodes `TOP` |
+| Edit a plugin loaded dynamically | The plugin and the function that calls it through the loader both change |
+| Static scope at the loader vs observed at run time | Static: `TOP`, `file`, `network`. Observed with audit hooks: `file` for one plugin, `network` for the other. |
 
-### 12.1 Transparency log format [spec]
+**Real package** (`dexweb_v2.py`, all 25 published wheels, parsed and never run):
 
-Algobank reuses existing open specifications for its log. It does not invent a format.
-
-**Two different Merkle trees.** The code Merkle tree (one per package, section 4) identifies code; its root is a value inside a log entry. The log Merkle tree (one, global, append-only) records entries; its root proves that no past entry was changed or removed.
-
-| Part | Format |
+| Measure | Value |
 |---|---|
-| Tree hashing | RFC 6962 / RFC 9162: leaf hash = SHA-256(0x00 ‖ entry bytes), interior hash = SHA-256(0x01 ‖ left ‖ right). |
-| Digests | Full SHA-256 everywhere. The 12-character hashes in the v0.1 prototype are for readable output only (G9). |
-| Signed tree head | C2SP `tlog-checkpoint` in `signed-note` format: the log's origin name, the tree size and the root hash, followed by signature lines. |
-| Witness cosignatures | C2SP `tlog-cosignature`, collected with the C2SP `tlog-witness` protocol. A client accepts a checkpoint only when k of n witnesses have cosigned it. This stops the operator from showing different histories to different clients. |
-| Serving | C2SP `tlog-tiles`: the tree is published as static, cacheable files, so clients, witnesses and monitors can fetch proofs from a plain web server or CDN. Sigstore's Rekor v2 runs on this tile-based model. |
-| Entry encoding | JSON canonicalized with RFC 8785 (JCS), so one entry always has one byte sequence and one hash. Large evidence (logs, corpora, reports) stays outside the log and is referenced by its digest. |
+| Median share of nodes unchanged from the previous release | 88% by count, 74% by code size |
+| Review work across all releases when results are reused | 25% of the work without reuse |
+| Updates with no code change | 8 of 24 |
+| Scope change detected | `process` first appears in 4.2.3 |
+| Scope per module (4.2.5) | `dexweb.dexgen`: `file`, 7 of 22 nodes pure; `dexweb.dexweb`: `file`, `process`, 1 of 11 pure |
+| Dependencies | 4, none pinned |
 
-**Entry kinds.**
+The dexweb figures come from one small package with one author and should not be generalized.
 
-| Kind | Required content |
-|---|---|
-| `admission` | Package name and version, artifact SHA-256, source repository and commit, code Merkle root, declared and detected scope per module, scope root, analyzer root and Python version, builder signatures, policy version. |
-| `result` | Code Merkle root of the package, a Merkle root over the per-node results in this batch, check name, tool digest and version, evidence digest, submitter signature. |
-| `vouch` | Node or subtree hash, the evidence it relies on, reviewer signature. Added with the bank layer. |
-| `revocation` | The hash being revoked, the reason, a reference to the proof. |
-| `key` | A submitter, builder, witness or log key added, rotated or retired. |
-| `policy` | A new version of the evidence policy per scope (section 12.2). |
+**Self-analysis:** `pkgmerkle.py` analyzed by itself has 25 nodes, no scope and no `TOP`, and gives identical hashes on repeated runs. A one-line change to `H()` changes `H` and the five nodes that call it directly or indirectly; the other 19 nodes keep their hashes.
 
-**Results are batched.** One `result` entry covers all nodes of one package for one check, through a Merkle root over the per-node outcomes. A client proves a single node's result with an inclusion proof into that batch. One entry per node per check would grow the log by thousands of entries per release.
-
-**Submission control.** Every entry is signed by a registered submitter key. The log rate-limits per submitter, following the Sigsum model, where rate limits are tied to the submitter (by domain or token) and not to the entry content. The log checks signatures and format only. It does not judge whether an entry is true; monitors and Algobank's result verification (section 1, "The core") do that.
-
-**Verification of admissions.** Every input to the analyzer is in the admission entry: the artifact digest, the analyzer root and the Python version. Any monitor can rerun the analyzer and compare the code root and scope. A bug found later in the analyzer identifies exactly which admissions to recheck.
-
-**Example entries** (digests shortened):
-
-```json
-{"kind": "admission", "package": "dexweb", "version": "4.2.5",
- "artifact_sha256": "…", "source": {"repo": "https://github.com/matrixdex/dexweb", "commit": "…"},
- "code_root": "…", "scope": {"dexweb.dexgen": ["file"], "dexweb.dexweb": ["file", "process"]},
- "scope_root": "…", "analyzer": {"name": "pkgmerkle", "root": "…", "python": "3.14"},
- "builders": [{"id": "builder-a", "sig": "…"}, {"id": "builder-b", "sig": "…"}], "policy_version": 1}
-
-{"kind": "result", "code_root": "…", "results_root": "…",
- "check": {"name": "fuzz", "tool_digest": "…", "version": "…"},
- "evidence_sha256": "…", "submitter": "…", "sig": "…"}
-```
-
-**Open question: lookups and revocation.** An append-only log proves that an entry exists. It cannot prove that no revocation exists for a hash. Clients that must know "is this hash revoked?" need either monitors that scan the log, or an index that is itself committed to by the checkpoint (a verifiable map). This choice is open.
-
-### 12.2 Scope enforcement and compute/effect separation [spec]
-
-**Goal.** Some parts only compute. Others read files, use the network or start processes. Keeping them separate lets reviewers spend their effort on the small parts with higher scope, while pure compute parts need lighter review.
-
-**What v0.1 supports today.**
-
-| Piece | Status |
-|---|---|
-| Detect each function's scope and roll it up through calls | Built |
-| Show when compute code calls effectful code (the roll-up exposes it) | Built |
-| Scope report per module | Trivial to add from current output |
-| Declared scope per module | Missing |
-| Admission rule: detected scope must not exceed declared scope | Missing |
-| Rule that compute parts must not reach effects | Missing |
-| Detection that introspection cannot evade | Missing (G12) |
-| Enforcement at run time | Missing |
-
-dexweb 4.2.5 shows why the split matters: `dexweb.dexgen` has scope `file` with 7 of 22 functions pure, and `dexweb.dexweb` has scope `file, process` with 1 of 11 pure. Pure and effectful code share modules, so a reviewer cannot skip either.
-
-**Design.**
-
-1. **Two kinds of part.** A *compute* part declares no scope: no effectful imports, no `TOP`, no introspection, no clock and no randomness. An *effect* part declares a narrow scope with parameters, for example "file: read under `./data`" or "network: `api.example.com:443`". Effect parts should be small.
-2. **Effects flow in as arguments.** Compute code receives what it needs (data, a reader, a client) from its caller and never reaches out by itself. Authority is then visible where the caller wires the parts together. This is the "functional core, imperative shell" pattern.
-3. **A manifest.** Each package declares the scope of each module in a file such as `algobank.toml`. Admission rejects any module whose detected scope exceeds what it declares. Unused declared scope is reported, so declarations stay minimal.
-4. **New scopes.** Add `clock` (time and date reads) and `entropy` (random numbers, `os.urandom`, `uuid`) to the scope table. A compute part that reads either is not deterministic, and its results cannot be replayed (G13).
-5. **Compute parts are checked by allowlist, not denylist.** A compute part may import only from a list of pure standard library modules and may not use dunder introspection. A denylist of dangerous names will always miss something. An allowlist fails safe.
-6. **The enforcement unit is the part, not the Python module.** Python cannot isolate one module from another inside a single process: any code can reach any object. So enforcement happens at a boundary between parts, and calls across it are serialized. The split must be coarse enough to make that cost acceptable.
-7. **Boundary mechanisms.**
-   - *Long term:* each part is a WebAssembly component. A compute component gets no imports. An effect component gets only the WASI interfaces it declared (for example, the file system limited to one pre-opened directory). `componentize-py` builds Python components. Pure Python is well supported; packages with C extensions are only partly supported, and CPython's `ssl` module is not available inside a component.
-   - *Near term:* each part runs in its own process. Compute processes are denied file and network access by the operating system: Linux Landlock restricts files, and TCP connect and bind from ABI version 4 (Linux 6.7). Unsupported rules are rejected by the kernel but dropped by best-effort libraries, so the host must check the Landlock version and refuse to run a part whose declared scope it cannot enforce. seccomp can further limit system calls.
-   - *Not a boundary:* Python audit hooks (PEP 578). The PEP states that they are not a sandbox. They are for observation only, as in section 10.1.
-8. **Review policy by scope.** The evidence policy (section 1, "The core") sets what each scope requires. A compute part might need tests and a result from the static check. An effect part with `network` might also need a fuzz result and a reviewer's vouch. The policy is versioned and logged (`policy` entries, section 12.1).
-
-**References.**
-[RFC 6962](https://www.rfc-editor.org/rfc/rfc6962) ·
-[RFC 9162](https://www.rfc-editor.org/rfc/rfc9162) ·
-[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) ·
-[C2SP specifications](https://github.com/C2SP/C2SP/) ·
-[Rekor v2](https://blog.sigstore.dev/rekor-v2-ga/) ·
-[Sigsum design](https://git.sigsum.org/sigsum/tree/doc/design.md) ·
-[PEP 578](https://peps.python.org/pep-0578/) ·
-[componentize-py](https://www.fermyon.com/blog/introducing-componentize-py) ·
-[ssl in WASI components](https://urllib3future.readthedocs.io/en/latest/wasi.html) ·
-[Landlock networking, Linux 6.7](https://phoronix.com/news/Landlock-Networking-Linux-6.7)
-
-## 13. How to run v0.1
+### 10.4 Running
 
 Requirements: Python 3.14, standard library only.
 
 ```
-# self-analysis and identity: see section 11
-
-# synthetic package, with runtime observation (give it any writable scratch directory)
+# synthetic package, with runtime observation (any writable scratch directory)
 python3.14 -I v0.1/synth_demo.py /path/to/scratch
 
-# dexweb history: first fetch the wheels into <scratch>/dexweb/
+# dexweb history: fetch the wheels into <scratch>/dexweb/ first
 mkdir -p <scratch>/dexweb/wheels && cd <scratch>/dexweb
 curl -sS -o meta.json https://pypi.org/pypi/dexweb/json
 python3.14 -I - <<'EOF' > urls.tsv
@@ -376,14 +444,44 @@ python3.14 -I v0.1/dexweb_v2.py <scratch>
 
 The wheels are parsed and never run.
 
-## 14. Next steps for v0.2
+## 11. Known limitations
 
-1. Fix G1 (global reads) and measure the effect on the dexweb reuse numbers.
-2. Fix G2 and G3 so the `TOP` rule matches decision 4.
-3. Add inclusion proofs and the full digest, and record the interpreter version with each root (G11).
-4. Run the release-history test on two or three larger, multi-author packages.
-5. Stand up a minimal transparency log in the C2SP formats (section 12.1) and record the analyzer's root as its first entry.
-6. Write the admission checker as code. Section 12 lists its rules.
-7. Fix G12 and G13, and add the per-module scope report.
-8. Add the scope manifest and the check that detected scope does not exceed declared scope (section 12.2).
-9. Prototype the near-term boundary: a compute part in its own process under Landlock, with the ABI version checked.
+| # | Limitation | Effect | Remedy |
+|---|---|---|---|
+| G1 | A function's hash does not depend on module-level values it reads. | Changing a module constant leaves a dependent function's hash unchanged, so a stale result can survive. Soundness gap. | Add edges from each function to the module-level names it reads, or to its `<module>` node; measure the cost on release histories first. |
+| G2 | `__getattr__` definitions and `from x import *` are flagged but do not produce `TOP`. | Inconsistent with section 4.4. | Add both flags to the `TOP` rule. |
+| G3 | Targets of computed `getattr` are not part of the hash. | A dispatcher can reach changed code without being invalidated. | Reject unbounded dynamic code at admission, or require an explicit target list that joins the hash. |
+| G4 | Literal imports of outside modules through `import_module` do not add scope. | Scope is under-reported. | Map literal imports through the scope table. |
+| G5 | The scope table is short, Python only, and partly matched by method name. | Unlisted libraries are missed. | A maintained API-to-scope table per language. |
+| G6 | Compiled code is invisible to the analyzer. | Native scope is unknown. | Native tier with confinement and native-code evidence (section 5.7). |
+| G7 | Methods in base classes are reached only through the name-based fallback. | Over-approximation. | Class-hierarchy resolution. |
+| G8 | No inclusion proofs for code roots. | A single node cannot be proven without the full leaf list. | Merkle audit paths over the sorted leaves. |
+| G9 | Digests truncated to 12 hex characters. | Not collision-safe. | Full SHA-256. |
+| G10 | Dynamic behavior outside the listed patterns, such as functions stored in dictionaries and called by key. | Not detected. | Runtime enforcement. |
+| G11 | Hashes depend on the `ast.dump` format of the interpreter. | A different Python version can give a different root. | Record the version with every root; test roots across versions; move to a version-independent serialization. |
+| G12 | Introspection through dunder attributes or frames can reach effectful functions without importing them. | Such code is reported with no scope. Soundness gap. | Treat introspection as `TOP`; allowlist for compute parts (section 4.5); enforce at the boundary. |
+| G13 | No `clock` or `entropy` detection. | Code that is not deterministic can appear pure. | Add both scopes to the detection table. |
+
+## 12. Roadmap (v0.2)
+
+1. Close the soundness gaps G1 and G12, and G2 and G3 so `TOP` is complete.
+2. Add `clock` and `entropy` detection (G13) and a per-module scope report.
+3. Use full digests, add inclusion proofs, and record the interpreter version with each root (G8, G9, G11).
+4. Implement the scope manifest and the declared-versus-detected check.
+5. Build the native-tier runner: profile from declared scope, system-call allowlist, self-check, fail closed, profile digest recorded.
+6. Stand up a minimal transparency log in the C2SP formats, with the analyzer's code root as its first admission.
+7. Implement the admission gates as code.
+8. Run the release-history test on larger packages with many contributors.
+9. Evaluate the component tier for pure-Python parts with `componentize-py`.
+
+## References
+
+- [RFC 6962](https://www.rfc-editor.org/rfc/rfc6962), [RFC 9162](https://www.rfc-editor.org/rfc/rfc9162): Certificate Transparency
+- [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785): JSON Canonicalization Scheme
+- [C2SP specifications](https://github.com/C2SP/C2SP/): signed-note, tlog-checkpoint, tlog-cosignature, tlog-witness, tlog-tiles
+- [Rekor v2](https://blog.sigstore.dev/rekor-v2-ga/): tile-based transparency log
+- [Sigsum design](https://git.sigsum.org/sigsum/tree/doc/design.md): submitter-based rate limiting
+- [PEP 578](https://peps.python.org/pep-0578/): Python runtime audit hooks
+- [componentize-py](https://www.fermyon.com/blog/introducing-componentize-py) and [ssl in WASI components](https://urllib3future.readthedocs.io/en/latest/wasi.html)
+- [PEP 783](https://peps.python.org/0783) and [Pyodide 314](https://blog.pyodide.org/posts/314-release): Emscripten packaging
+- [Landlock networking, Linux 6.7](https://phoronix.com/news/Landlock-Networking-Linux-6.7)
