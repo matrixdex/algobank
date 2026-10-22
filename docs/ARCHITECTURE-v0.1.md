@@ -11,7 +11,17 @@ Code in this release: `v0.1/pkgmerkle.py` (the analyzer), `v0.1/synth_demo.py` (
 
 Algobank is a curated library of software parts (a "garden") in which every part shows what it can do, and in which parts compose into larger programs without gaining hidden powers. Each part is identified by a content hash, so a change to a part is visible and earlier checks of unchanged parts can be reused.
 
-The bank layer (deposits, penalties, interest) sits on top of this identity and scope system. It is not part of v0.1. See section 12.
+### The core
+
+Algobank's core, without banking and insurance, has three parts:
+
+1. **Identity.** A code Merkle tree gives each package and each function a hash, so changes are exact and earlier work can be reused. [built]
+2. **Scope.** What the code can do is visible, and dynamic code is `TOP`. [built]
+3. **A place to attach results by hash.** Any party can publish a signed result about a node: a test run, a fuzz run, an AI review, a leak check. Algobank stores it against the hash and reuses it while the hash is unchanged. [spec]
+
+Algobank does not build its own checks. Tests, fuzzers, linters and reviewers are external tools, and their signed results attach to node hashes. Because each result is tied to a hash and not to a pipeline step, checks are independent, run in any order, and can be added without changing the core.
+
+The bank layer (deposits, penalties, interest) sits on top of this core. It is not part of v0.1. See section 12.
 
 ## 2. The five decisions v0.1 builds on
 
