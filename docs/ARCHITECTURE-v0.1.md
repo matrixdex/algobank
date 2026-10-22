@@ -154,7 +154,7 @@ Import with a literal name that is a package module is resolved as a normal impo
 | G8 | No inclusion proofs. | Cannot prove one node is in a root without the full list. | Standard Merkle audit paths over the sorted leaves. |
 | G9 | The digest is truncated to 12 hex characters. | Not collision-safe for production. | Use the full SHA-256. |
 | G10 | Dynamic behavior that avoids every listed pattern (functions stored in dictionaries and called by key, for example). | Not detected. | Runtime observation and host enforcement. |
-| G11 | Hashes come from Python's `ast.dump`, whose output can change between interpreter versions. Only 3.13.16 and 3.14.6 were compared, on three inputs. | The same source could get a different root under another Python version. | Record the interpreter version with every root. Add a test that compares roots across supported versions. Longer term, hash a version-independent serialization of the tree. |
+| G11 | Hashes come from Python's `ast.dump`, whose output can change between interpreter versions. v0.1 targets Python 3.14 only. | The same source could get a different root under another Python version. | Record the interpreter version with every root. Add a test that compares roots across supported versions. Longer term, hash a version-independent serialization of the tree. |
 
 ## 10. Test results
 
@@ -223,7 +223,7 @@ with open('pkgmerkle.py') as fh:
 print(p.root(), p.scope(), p.scope_root(), len(p.nodes))"
 ```
 
-The root depends on the output format of Python's `ast.dump`, so it is valid for the interpreter versions where it was checked. The value above is identical on Python 3.14.6 and 3.13.16. See gap G11.
+The root depends on the output format of Python's `ast.dump`, so record the Python version with it. See gap G11.
 
 ## 12. Target architecture around v0.1 [spec]
 
@@ -244,9 +244,7 @@ These parts are decided in design and not built.
 
 ## 13. How to run v0.1
 
-Requirements: Python 3.14, standard library only. Python 3.10 is end of life and is not supported.
-
-Tested on Python 3.14.6 (the target) and 3.13.16. Both give identical results for the analyzer's root, the synthetic test and the dexweb test. Under `-W error` on 3.14, the three scripts raise no warnings. Install 3.14 with `uv python install 3.14` if the system does not have it.
+Requirements: Python 3.14, standard library only.
 
 ```
 # self-analysis and identity: see section 11
