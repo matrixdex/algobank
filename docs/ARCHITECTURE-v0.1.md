@@ -19,7 +19,9 @@ Algobank's core, without banking and insurance, has three parts:
 2. **Scope.** What the code can do is visible, and dynamic code is `TOP`. [built]
 3. **A place to attach results by hash.** Any party can publish a signed result about a node: a test run, a fuzz run, an AI review, a leak check. Algobank stores it against the hash and reuses it while the hash is unchanged. [spec]
 
-Algobank does not build its own checks. Tests, fuzzers, linters and reviewers are external tools, and their signed results attach to node hashes. Because each result is tied to a hash and not to a pipeline step, checks are independent, run in any order, and can be added without changing the core.
+Algobank owns a small set of core checks: computing identity and scope, the admission gates, verifying submitted results (signature, hash binding, sampled reruns), and replaying breach proofs. It also sets the policy for which evidence each scope requires. All other checks (tests, fuzzers, linters, reviews) are external tools whose signed results attach to node hashes. Algobank runs a reference set of them at the start, so the store is not empty.
+
+Because each result is tied to a hash and not to a pipeline step, external checks are independent, run in any order, and can be added without changing the core.
 
 The bank layer (deposits, penalties, interest) sits on top of this core. It is not part of v0.1. See section 12.
 
