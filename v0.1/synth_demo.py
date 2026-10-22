@@ -53,7 +53,8 @@ print("  (core.run is invalidated although it never names plugin b: it dynamical
 work = tempfile.mkdtemp(prefix="synth_", dir=ROOT)
 for path, src in V.items():
     full = os.path.join(work, "v1", path); os.makedirs(os.path.dirname(full), exist_ok=True)
-    open(full, "w").write(src)
+    with open(full, "w") as fh:
+        fh.write(src)
 sys.path.insert(0, os.path.join(work, "v1"))
 events = []
 def hook(event, args):

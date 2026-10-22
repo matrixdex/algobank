@@ -3,8 +3,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pkgmerkle import Package, TOP
 SP = sys.argv[1]
 rels = []
-for line in open(f"{SP}/dexweb/urls.tsv"):
-    v, url, sha, fn = line.rstrip("\n").split("\t"); rels.append((v, fn))
+with open(f"{SP}/dexweb/urls.tsv") as fh:
+    for line in fh:
+        v, url, sha, fn = line.rstrip("\n").split("\t"); rels.append((v, fn))
 rels.sort(key=lambda r: tuple(int(x) for x in r[0].split(".")))
 res = {}
 for v, fn in rels:

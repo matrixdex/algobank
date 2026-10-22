@@ -154,6 +154,7 @@ Import with a literal name that is a package module is resolved as a normal impo
 | G8 | No inclusion proofs. | Cannot prove one node is in a root without the full list. | Standard Merkle audit paths over the sorted leaves. |
 | G9 | The digest is truncated to 12 hex characters. | Not collision-safe for production. | Use the full SHA-256. |
 | G10 | Dynamic behavior that avoids every listed pattern (functions stored in dictionaries and called by key, for example). | Not detected. | Runtime observation and host enforcement. |
+| G11 | Hashes come from Python's `ast.dump`, whose output can change between interpreter versions. Only 3.13.16 and 3.14.6 were compared, on three inputs. | The same source could get a different root under another Python version. | Record the interpreter version with every root. Add a test that compares roots across supported versions. Longer term, hash a version-independent serialization of the tree. |
 
 ## 10. Test results
 
@@ -214,12 +215,15 @@ To recompute:
 
 ```
 cd v0.1
-python3 -I -c "
+python3.14 -I -B -c "
 import sys; sys.path.insert(0, '.')
 from pkgmerkle import Package
-p = Package({'pkgmerkle.py': open('pkgmerkle.py').read()})
+with open('pkgmerkle.py') as fh:
+    p = Package({'pkgmerkle.py': fh.read()})
 print(p.root(), p.scope(), p.scope_root(), len(p.nodes))"
 ```
+
+The root depends on the output format of Python's `ast.dump`, so it is valid for the interpreter versions where it was checked. The value above is identical on Python 3.14.6 and 3.13.16. See gap G11.
 
 ## 12. Target architecture around v0.1 [spec]
 
@@ -240,18 +244,20 @@ These parts are decided in design and not built.
 
 ## 13. How to run v0.1
 
-Requirements: Python 3.10 or later, standard library only.
+Requirements: Python 3.14, standard library only. Python 3.10 is end of life and is not supported.
+
+Tested on Python 3.14.6 (the target) and 3.13.16. Both give identical results for the analyzer's root, the synthetic test and the dexweb test. Under `-W error` on 3.14, the three scripts raise no warnings. Install 3.14 with `uv python install 3.14` if the system does not have it.
 
 ```
 # self-analysis and identity: see section 11
 
 # synthetic package, with runtime observation (give it any writable scratch directory)
-python3 -I v0.1/synth_demo.py /path/to/scratch
+python3.14 -I v0.1/synth_demo.py /path/to/scratch
 
 # dexweb history: first fetch the wheels into <scratch>/dexweb/
 mkdir -p <scratch>/dexweb/wheels && cd <scratch>/dexweb
 curl -sS -o meta.json https://pypi.org/pypi/dexweb/json
-python3 -I - <<'EOF' > urls.tsv
+python3.14 -I - <<'EOF' > urls.tsv
 import json
 d = json.load(open("meta.json"))
 for v, files in d["releases"].items():
@@ -260,7 +266,7 @@ for v, files in d["releases"].items():
             print(v, f["url"], f["digests"]["sha256"], f["filename"], sep="\t")
 EOF
 # download each URL into wheels/<filename> and check its sha256 against the third column
-python3 -I v0.1/dexweb_v2.py <scratch>
+python3.14 -I v0.1/dexweb_v2.py <scratch>
 ```
 
 The wheels are parsed and never run.
@@ -269,7 +275,7 @@ The wheels are parsed and never run.
 
 1. Fix G1 (global reads) and measure the effect on the dexweb reuse numbers.
 2. Fix G2 and G3 so the `TOP` rule matches decision 4.
-3. Add inclusion proofs and the full digest.
+3. Add inclusion proofs and the full digest, and record the interpreter version with each root (G11).
 4. Run the release-history test on two or three larger, multi-author packages.
 5. Stand up a minimal transparency log and record the analyzer's root as its first entry.
 6. Write the admission checker as code. Section 12 lists its rules.
