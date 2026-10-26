@@ -104,6 +104,13 @@ Recursion and mutual recursion form cycles. The call graph is reduced to strongl
 
 The root commits to names and content, because names are the public interface. Renaming a function changes the root; reformatting does not.
 
+Proven properties (section 10.4), assuming a collision-resistant hash:
+
+- **Binding.** Two packages have the same code root only if they have the same set of (node id, Merkle hash) pairs.
+- **Order independence.** The root depends only on that set, not on the order of nodes.
+
+Binding depends on node ids being unique. With repeated leaves the rule that duplicates an odd last leaf makes different lists collide: `[a, b, c]` and `[a, b, c, c]` have the same root. Leaves and interior nodes cannot be confused because a leaf's input contains `=` and an interior node's input is 24 hex characters.
+
 ### 3.5 Call resolution
 
 The call graph covers the whole package.
@@ -390,8 +397,10 @@ Example admission entry (digests shortened):
 | `v0.1/pkgmerkle.py` | The analyzer: code Merkle tree, call resolution, scope detection and roll-up, `TOP`, code root and scope root. Standard library only. |
 | `v0.1/synth_demo.py` | Test on a synthetic eight-file package with a dynamic plugin loader, a computed `getattr` dispatcher, and plugins that use files and the network. |
 | `v0.1/dexweb_v2.py` | Release-history test over every published wheel of the `dexweb` package. |
+| `v0.1/proofs/CodeRoot.v` | Coq proof of the code root computation (section 10.4). |
+| `v0.1/proofs/check_model.py`, `Extract.v`, `driver.ml` | Check that the proven model computes the same root as `pkgmerkle.py`. |
 
-Built: sections 3.1–3.5, 3.6 (recording pins), 3.7 (truncated digests), 4.2–4.4. Everything else is specified.
+Built: sections 3.1–3.5, 3.6 (recording pins), 3.7 (truncated digests), 4.2–4.4, and the proof of section 3.4. Everything else is specified.
 
 ### 10.2 First garden part
 
@@ -444,9 +453,31 @@ The dexweb figures come from one small package with one author and should not be
 
 **Self-analysis:** `pkgmerkle.py` analyzed by itself has 25 nodes, no scope and no `TOP`, and gives identical hashes on repeated runs. A one-line change to `H()` changes `H` and the five nodes that call it directly or indirectly; the other 19 nodes keep their hashes.
 
-### 10.4 Running
+### 10.4 Proof of the code root
 
-Requirements: Python 3.14, standard library only.
+`v0.1/proofs/CodeRoot.v` models `Package.leaves()` and `Package.root()` in Coq 8.18 and proves:
+
+| Theorem | Statement |
+|---|---|
+| `code_root_binding` | If two well-formed packages have the same code root, they contain the same (node id, Merkle hash) pairs. |
+| `code_root_canonical` | Listing a package's nodes in a different order gives the same code root. |
+| `code_root_correct` | For well-formed packages, the code roots are equal exactly when the sets of pairs are equal. |
+| `dup_collision` | Without unique leaves, binding fails: `[a, b, c]` and `[a, b, c, c]` reduce to the same root. |
+
+A package is well formed when it has no repeated pair and every Merkle hash is a 12-character digest; `pkgmerkle.py` guarantees both, because node ids are dictionary keys and Merkle hashes are outputs of `H`.
+
+**Assumptions.** The proof is parameterized over the hash and the sort, with these hypotheses:
+
+1. `H` returns 12 lowercase hex characters and is injective. Injectivity idealizes collision resistance; truncated 12-character digests do not meet it in practice (G9).
+2. The sort returns a permutation of its input, and the same output for inputs that are permutations of each other. Python's `sorted` on strings satisfies both.
+
+`Print Assumptions code_root_correct` reports no axioms beyond these hypotheses. The trusted base is the Coq kernel and the correspondence between the model and the Python code.
+
+**Model check.** `check_model.py` closes the second gap by testing. It extracts the proven `code_root` to OCaml and compares it with `Package.root()` on 5,000 random packages of 0 to 80 nodes, using the same stand-in hash on both sides. All 5,000 roots match. Two deliberate changes to the Python code (pairing an odd last leaf with nothing, and not sorting leaves) each produce mismatches on more than half the cases, so the check detects divergence.
+
+### 10.5 Running
+
+Requirements: Python 3.14, standard library only. The proof additionally needs Coq 8.18 and, for the model check, OCaml with `ocamlfind`.
 
 ```
 # synthetic package, with runtime observation (any writable scratch directory)
@@ -469,6 +500,14 @@ python3.14 -I v0.1/dexweb_v2.py <scratch>
 
 The wheels are parsed and never run.
 
+```
+# check the proof
+cd v0.1/proofs && coqc -Q . Algobank CodeRoot.v
+
+# compare the proven model with pkgmerkle.py (builds in a temporary directory)
+python3.14 -I v0.1/proofs/check_model.py
+```
+
 ## 11. Known limitations
 
 | # | Limitation | Effect | Remedy |
@@ -481,7 +520,7 @@ The wheels are parsed and never run.
 | G6 | Compiled code is invisible to the analyzer. | Native scope is unknown. | Native tier with confinement and native-code evidence (section 5.7). |
 | G7 | Methods in base classes are reached only through the name-based fallback. | Over-approximation. | Class-hierarchy resolution. |
 | G8 | No inclusion proofs for code roots. | A single node cannot be proven without the full leaf list. | Merkle audit paths over the sorted leaves. |
-| G9 | Digests truncated to 12 hex characters. | Not collision-safe. | Full SHA-256. |
+| G9 | Digests truncated to 12 hex characters. | Not collision-safe, so the hash assumption of the code root proof (section 10.4) does not hold in practice. | Full SHA-256. |
 | G10 | Dynamic behavior outside the listed patterns, such as functions stored in dictionaries and called by key. | Not detected. | Runtime enforcement. |
 | G11 | Hashes depend on the `ast.dump` format of the interpreter. | A different Python version can give a different root. | Record the version with every root; test roots across versions; move to a version-independent serialization. |
 | G12 | Introspection through dunder attributes or frames can reach effectful functions without importing them. | Such code is reported with no scope. Soundness gap. | Treat introspection as `TOP`; allowlist for compute parts (section 4.5); enforce at the boundary. |
@@ -498,7 +537,7 @@ The wheels are parsed and never run.
 7. Implement the admission gates as code.
 8. Run the release-history test on larger packages with many contributors.
 9. Evaluate the component tier for pure-Python parts with `componentize-py`.
-10. Define the proof result format and specify, then prove, one part of the trusted base, starting with the code root computation.
+10. Define the proof result format, record the code root proof in it, and prove the next part of the trusted base: node Merkle hashing (section 3.3).
 
 ## References
 
