@@ -42,6 +42,7 @@ All other checks (tests, fuzzers, linters, reviews) are external tools whose sig
 4. Static analysis sorts and flags. A boundary outside the code enforces.
 5. Every enforcement step fails closed: if a restriction cannot be applied and verified, the part does not run.
 6. Existing standards and tools are reused wherever they fit.
+7. Simplicity over saved work. Add complexity only when core functionality is impossible without it. When the alternative is only more computation, spend the CPU cycles and keep the design simple. Example: reviewing each function independently would avoid rechecking the whole package after a change, but rechecking achieves the same result, so independent function review is not added.
 
 ### 1.4 Layers above the core
 
