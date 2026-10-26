@@ -79,21 +79,12 @@ def test_star_import():
     b = Package({"pkg/__init__.py": "", "pkg/x.py": "LIMIT = 2\n", "pkg/use.py": use})
     assert "pkg.use:f" in changed(a, b)
 
-# ---- receivers of method calls (G7)
+# ---- receivers of method calls (G7): link by method name, never narrow
 
 TWO = "class Text:\n    def append(self, x):\n        return {t}\n\nclass Other:\n    def append(self, x):\n        return {o}\n\n"
 
 def with_classes(body, t=1, o=1):
     return Package({"m.py": TWO.format(t=t, o=o) + body})
-
-def test_builtin_receiver_is_not_linked():
-    body = "def f():\n    x = []\n    x.append(1)\n    return x\n"
-    assert "m:f" not in changed(with_classes(body), with_classes(body, o=2))
-
-def test_constructor_receiver_links_to_its_class_only():
-    body = "def f():\n    t = Text()\n    t.append(1)\n"
-    assert "m:f" not in changed(with_classes(body), with_classes(body, o=2))
-    assert "m:f" in changed(with_classes(body), with_classes(body, t=2))
 
 def test_parameter_receiver_stays_conservative():
     body = "def f(t):\n    t.append(1)\n"
