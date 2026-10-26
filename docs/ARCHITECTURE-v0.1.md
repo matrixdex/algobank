@@ -160,7 +160,7 @@ The analyzer has three parts:
 | Part | Input | Output | Trust |
 |---|---|---|---|
 | Front end | Source files | Per-node facts: own hash, dependency edges, pin strings, direct scope, flags | Trusted and tested; Python has no formal semantics to prove it against |
-| Back end (`backend`) | The facts | Components (Tarjan's algorithm), Merkle hashes, rolled-up scope and flags | Untrusted |
+| Back end (`backend`) | The facts | Components (Tarjan's algorithm) and Merkle hashes over all dependency edges; rolled-up scope and flags over call edges only (section 4.3) | Untrusted |
 | Checker (`check_backend`) | The facts and the back end's output | Accept, or an error | Checks exactly the conditions of the Merkle soundness proof |
 
 The checker verifies that own hashes are digests; that every node belongs to exactly the component it is assigned to; that every component's members are mutually reachable; that every dependency edge stays inside the component or is listed as an external dependency, and every listed external dependency is used; and that every Merkle hash satisfies the equation in section 3.3. The analyzer runs the checker on every analysis and stops if it fails, so the theorem covers every result the analyzer produces. This is the proven-checker approach: Tarjan's algorithm is not proven; its output is checked.
@@ -199,7 +199,7 @@ Scopes come from a table keyed by where a name was imported from.
 
 ### 4.3 Roll-up [built]
 
-A node's rolled-up scope is its own scope plus the rolled-up scope of everything it calls, across modules. A package's scope is the union over its nodes, and the scope root hashes that set. Any change that adds a scope anywhere changes the scope root, which pinpoints where a new power entered.
+A node's rolled-up scope is its own scope plus the rolled-up scope of everything that runs when it runs: the functions it calls and, for a module's top-level code, the modules it imports and the functions it calls at import time. Roll-up follows these call edges only. A function that reads a module's constants depends on that module for hashing (section 3.3) but does not run its import-time code, so it does not inherit that code's scope. A package's scope is the union over its nodes, and the scope root hashes that set. Any change that adds a scope anywhere changes the scope root, which pinpoints where a new power entered.
 
 ### 4.4 `TOP` [built]
 
@@ -424,6 +424,8 @@ Example admission entry (digests shortened):
 | `v0.1/synth_demo.py` | Test on a synthetic eight-file package with a dynamic plugin loader, a computed `getattr` dispatcher, and plugins that use files and the network. |
 | `v0.1/dexweb_v2.py` | Release-history test over every published wheel of the `dexweb` package. |
 | `v0.1/test_pkgmerkle.py` | Regression tests: full digests, prefixes, module-level dependencies (constants, imported constants, class attributes, `global` writers), and one test per checker condition. |
+| `v0.1/algobank_diff.py` | Diff tool: compares two versions of a package and reports new scope, dynamic code, hooks, binaries and dependencies (section 10.6). |
+| `v0.1/test_diff.py` | Tests for the diff tool on synthetic wheels that reproduce real attack patterns. |
 | `v0.1/proofs/CodeRoot.v` | Coq proof of the code root computation (section 10.4). |
 | `v0.1/proofs/MerkleSound.v` | Coq proof of Merkle soundness (section 10.5). |
 | `v0.1/proofs/check_model.py`, `Extract.v`, `driver.ml` | Check that the proven model computes the same root as `pkgmerkle.py`. |
@@ -436,11 +438,11 @@ Built: sections 3.1–3.5, 3.6 (recording pins), 3.7, 3.8, 4.2–4.4, and the pr
 
 | Item | Value |
 |---|---|
-| Code root | `b2be176b813b50b5d86c26add24230b8ec828880551812b64a46ad5ecaf131ac` |
+| Code root | `874763c0954c893940532ec1c042fdb3ecc89b4f0c1fe0bb10140478bd85cbf7` |
 | Scope | none |
 | Scope root | `140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe` |
-| Nodes | 29 |
-| File SHA-256 | `30af56c6745b8683037894c02588184f3bdba7d1e398fe6435a6c91b8bd6fa7a` |
+| Nodes | 30 |
+| File SHA-256 | `ee2b180664be4d69db3541e7e3218af724382106b5ef7e383a2c437c042026f1` |
 | Python | 3.14 |
 
 To recompute:
@@ -480,7 +482,7 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))"
 
 The dexweb figures come from one small package with one author and should not be generalized.
 
-**Self-analysis:** `pkgmerkle.py` analyzed by itself has 29 nodes, no scope and no `TOP`, and gives identical hashes on repeated runs. A one-line change to `H()` changes `H` and the eight nodes that call it directly or indirectly; the other 20 nodes keep their hashes.
+**Self-analysis:** `pkgmerkle.py` analyzed by itself has 30 nodes, no scope and no `TOP`, and gives identical hashes on repeated runs. A one-line change to `H()` changes `H` and the eight nodes that call it directly or indirectly; the other 21 nodes keep their hashes.
 
 ### 10.4 Proof of the code root
 
@@ -530,7 +532,43 @@ The theorems hold for any output that meets the checker's conditions (section 3.
 
 **Gap between proof and code.** The proof covers the conditions; `check_backend` is Python, and its correspondence to `WF` is established by the per-condition tests, not by proof. The front end, including normalization and own hashes, is outside the proof.
 
-### 10.6 Running
+### 10.6 Diff tool
+
+`algobank_diff.py` is the first product built on the core. For a Python package it answers two questions a developer or coding agent faces when adding or updating a dependency: what changed, and what can the package do now.
+
+```
+python3.14 -I v0.1/algobank_diff.py diff NAME OLD NEW [--json]
+python3.14 -I v0.1/algobank_diff.py scope NAME VERSION [--json]
+```
+
+`OLD`, `NEW` and `VERSION` are PyPI versions or paths to local wheel or sdist files. The tool downloads a wheel (preferring a pure-Python wheel, otherwise a Linux x86-64 wheel, otherwise the sdist), checks it against PyPI's SHA-256, and reads it in memory. Nothing from the package is installed, imported or run.
+
+**Findings.**
+
+| Finding | Severity |
+|---|---|
+| New file that runs on every Python start (`.pth`, `sitecustomize.py`) | high |
+| Package can now use `network`, `process`, `env`, `native` or `TOP`, which it could not before | high |
+| Such a scope newly reachable from existing code, named with where it enters | high |
+| New `eval`, `exec`, deserialization, or run-time changes to another module | high |
+| New native binary (not analyzed) | high |
+| New `file` scope, other new dynamic code (computed imports and attributes, `__getattr__`, `import *`), changed native binary, new dependency, new entry point or installed script | medium |
+| Changed dependency range, new or changed data files | low |
+
+Exit status is 1 when any finding is high, 0 otherwise, and 2 on error, so the tool can gate a CI job. `--json` gives the same report for programs and agents. The report also states what it could not see: unparsed files, native binaries, and analysis from an sdist when no wheel exists.
+
+**Validation.**
+
+| Check | Result |
+|---|---|
+| Synthetic wheels reproducing attack patterns: a `.pth` file with a module that reads the environment and uses the network (LiteLLM 1.107.0); an existing formatting function that starts using the network (chalk/debug); new `exec`; a new native binary; a new dependency | Each produces the expected high or medium finding (`test_diff.py`) |
+| A clean update of the same synthetic package, and a dependency range that changes only in formatting | No findings |
+| Normal updates of popular packages: requests 2.31.0→2.32.3, urllib3 2.2.1→2.2.2, idna 3.6→3.7, rich 13.7.0→13.7.1, packaging 24.0→24.1 | Four have no medium or high findings. requests has one real change flagged high: a new computed import, run at import time, that selects a character-detection library. |
+| dexweb 4.2.2→4.2.3 | `process` reported as new, entering at `Dexweb.run_git` |
+
+The known malicious releases of LiteLLM (1.82.7, 1.82.8, 1.107.0) have been removed from PyPI, so they could not be tested directly.
+
+### 10.7 Running
 
 Requirements: Python 3.14, standard library only. The proof additionally needs Coq 8.18 and, for the model check, OCaml with `ocamlfind`.
 
@@ -559,6 +597,10 @@ python3.14 -I v0.1/dexweb_v2.py <scratch>
 The wheels are parsed and never run.
 
 ```
+# diff tool
+python3.14 -I v0.1/test_diff.py
+python3.14 -I v0.1/algobank_diff.py diff requests 2.31.0 2.32.3
+
 # check the proofs
 cd v0.1/proofs && coqc -Q . Algobank CodeRoot.v && coqc -Q . Algobank MerkleSound.v
 
@@ -582,6 +624,7 @@ python3.14 -I v0.1/proofs/check_model.py
 | G11 | Hashes depend on the `ast.dump` format of the interpreter. | A different Python version can give a different root. | Record the version with every root; test roots across versions; move to a version-independent serialization. |
 | G12 | Introspection through dunder attributes or frames can reach effectful functions without importing them. | Such code is reported with no scope. Soundness gap. | Treat introspection as `TOP`; allowlist for compute parts (section 4.5); enforce at the boundary. |
 | G13 | No `clock` or `entropy` detection. | Code that is not deterministic can appear pure. | Add both scopes to the detection table. |
+| G14 | A function depends on the whole top-level code of its module, which depends on the top-level code of every module it imports. | Over-invalidation: in rich 13.7.0→13.7.1, two modules' top-level code changed and 832 of 885 nodes changed hash, although only those two changed code. Reuse of results collapses on packages whose modules import each other. | Depend only on the module-level names a function actually reads. |
 
 ## 12. Roadmap (v0.2)
 
@@ -594,11 +637,13 @@ python3.14 -I v0.1/proofs/check_model.py
 7. Implement the admission gates as code.
 8. Run the release-history test on larger packages with many contributors.
 9. Evaluate the component tier for pure-Python parts with `componentize-py`.
-10. Continue proving the core on the front end, back end and checker split (section 3.8):
+10. Fix G14 so a function depends only on the module-level names it reads, then rerun the release-history test on rich and requests.
+11. Take the diff tool to users: a GitHub Action that comments on pull requests changing `requirements.txt`, `uv.lock` or `poetry.lock`; a shared cache of reports keyed by artifact hash; and an MCP server for coding agents. Measure how often a report changes a decision and how often users mark findings as harmless.
+12. Continue proving the core on the front end, back end and checker split (section 3.8):
     1. Roll-up soundness and `TOP` propagation, with the matching conditions added to the checker.
     2. Reuse soundness: a result accepted for a hash stays valid wherever that hash appears.
     3. The result acceptance rule (section 6.2).
-11. Define the proof result format and record each core proof in it.
+13. Define the proof result format and record each core proof in it.
 
 ## References
 

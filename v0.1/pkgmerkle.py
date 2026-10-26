@@ -247,6 +247,8 @@ class Package:
             names.update(self._bind_imports(mod, fn))
             e, c, fl, er, st = self._scan(fn, mod, cls, names)
             raw[nid] = dict(own=H(canon_fn(fn)), size=size(fn), edges=e, caps=c, flags=fl, ext=er, stats=st)
+        for r in raw.values():
+            r["calls"] = set(r["edges"])      # code that runs: calls, imports, import-time calls
         for nid, (fn, mod, cls) in self.funcs.items():
             # a function reads its module's constants, class attributes and imported names
             raw[nid]["edges"].add(f"{mod}:<module>")
@@ -255,6 +257,7 @@ class Package:
                 raw[f"{mod}:<module>"]["edges"].add(nid)
         for r in raw.values():
             r["edges"] = {x for x in r["edges"] if x in raw}
+            r["calls"] = {x for x in r["calls"] if x in raw}
             r["pins"] = {f"{x}={self.pins.get(x.lower(), 'stdlib/unpinned')}" for x in r["ext"]}
         self.facts = raw
         out, self.comps = backend(raw)
@@ -290,7 +293,8 @@ class Package:
 # ---- back end: everything after parsing --------------------------------------
 # Input: per-node facts from the front end. For each node id:
 #   own   - hash of the node's normalized code
-#   edges - node ids it depends on (calls, its module's top-level code, ...)
+#   edges - node ids it depends on (calls, its module's top-level code, ...); used for hashing
+#   calls - the subset of edges whose code runs when this node runs; used for scope roll-up
 #   pins  - "name=pin" strings for the outside packages it uses
 #   caps, flags - its direct scopes and dynamic-code flags
 # The proof in proofs/MerkleSound.v covers any output that check_backend accepts.
@@ -331,14 +335,28 @@ def backend(facts):
                     ext=sorted({d for q in members for d in graph[q] if d not in cs}),
                     pins=sorted(set().union(*[facts[q]["pins"] for q in members])))
         base = comp_base(comp, own, merk)
-        ccaps = set().union(*[facts[q]["caps"] for q in members], *[out[d]["caps"] for d in comp["ext"]])
-        cflags = set().union(*[facts[q]["flags"] for q in members], *[out[d]["flags"] for d in comp["ext"]])
-        if cflags & {"dyn-import", "dyn-attr", "dyn-exec", "dyn-patch"}: ccaps = ccaps | {TOP}
         for q in members:
             merk[q] = H(base + own[q])
-            out[q] = dict(merkle=merk[q], caps=ccaps, flags=cflags, comp=len(comps))
+            out[q] = dict(merkle=merk[q], comp=len(comps))
         comps.append(comp)
+    caps, flags = rollup(facts)
+    for q in out:
+        out[q]["caps"], out[q]["flags"] = caps[q], flags[q]
     return out, comps
+
+def rollup(facts):
+    """Scope and flags of a node: its own plus those of everything that runs when it runs (calls only)."""
+    calls = {k: sorted(v.get("calls", v["edges"])) for k, v in facts.items()}
+    caps, flags = {}, {}
+    for members in sccs(calls):
+        cs = set(members)
+        below = {d for q in members for d in calls[q] if d not in cs}
+        ccaps = set().union(*[facts[q]["caps"] for q in members], *[caps[d] for d in below])
+        cflags = set().union(*[facts[q]["flags"] for q in members], *[flags[d] for d in below])
+        if cflags & {"dyn-import", "dyn-attr", "dyn-exec", "dyn-patch"}: ccaps = ccaps | {TOP}
+        for q in members:
+            caps[q], flags[q] = ccaps, cflags
+    return caps, flags
 
 def _reaches_all(start, targets, graph):
     """True if every node in targets is reachable from start through nodes in targets."""
