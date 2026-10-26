@@ -104,6 +104,19 @@ def bound_names(st):
             out |= bound_names(n)
     return out
 
+def rebound_names(st):
+    """Names a top-level statement rebinds (assignment, import, definition), not names it may only change."""
+    if isinstance(st, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)): return {st.name}
+    if isinstance(st, (ast.Import, ast.ImportFrom)):
+        return {"*" if a.name == "*" else (a.asname or a.name.split(".")[0]) for a in st.names}
+    out = set()
+    for n in _walk_shallow(st):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)): out.add(n.id)
+        elif n is not st and isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): out.add(n.name)
+        elif n is not st and isinstance(n, (ast.Import, ast.ImportFrom)): out |= rebound_names(n)
+        elif isinstance(n, (ast.Global, ast.Nonlocal)): out |= set(n.names)
+    return out
+
 def class_skeleton(cdef):
     """A class definition without its methods, which are nodes of their own."""
     c = copy.deepcopy(cdef)
@@ -125,10 +138,11 @@ class Package:
         self.funcs = {}      # node id -> (fnnode, modname, clsqual)
         self.classes = {}    # modname -> {clsqual}
         self.top = {}        # modname -> {name: ('fn'|'cls', qual)}
+        self.classdefs = {}  # (modname, clsqual) -> ClassDef
         for mod, (path, tree) in self.trees.items():
             self.classes[mod], self.top[mod] = set(), {}
             self._collect(mod, tree.body, None)
-        self.values, self.effects = {}, {}
+        self.values, self.effects, self.rebinds = {}, {}, {}
         for mod, (path, tree) in self.trees.items():
             groups, effects = {}, []
             for st in tree.body:
@@ -138,9 +152,18 @@ class Package:
                 if not names: effects.append(st)
                 for nm in names: groups.setdefault(nm, []).append(st)
             self.values[mod], self.effects[mod] = groups, effects
+            rb = {}
+            for st in tree.body:
+                for nm in rebound_names(st): rb[nm] = rb.get(nm, 0) + 1
+            self.rebinds[mod] = rb
         self.by_method = {}
         for nid in self.funcs:
             self.by_method.setdefault(nid.split(":", 1)[1].split(".")[-1], []).append(nid)
+        self.global_writes = {}
+        for nid, (fn, mod, cls) in self.funcs.items():
+            for n in ast.walk(fn):
+                if isinstance(n, ast.Global): self.global_writes.setdefault(mod, set()).update(n.names)
+        self._build_hierarchy()
         self.nodes = {}
         self._analyze()
 
@@ -153,6 +176,7 @@ class Package:
             elif isinstance(n, ast.ClassDef):
                 q = (cls + "." if cls else "") + n.name
                 self.classes[mod].add(q)
+                self.classdefs[(mod, q)] = n
                 if cls is None: self.top[mod][n.name] = ("cls", q)
                 self._collect(mod, n.body, q)
 
@@ -191,6 +215,147 @@ class Package:
         init = f"{mod}:{q}.__init__"
         return [init] if init in self.funcs else []
 
+    # ---- class hierarchy and receiver types (G7) ----------------------------
+    def _unshadowed_builtin(self, mod, name, names):
+        return (hasattr(builtins, name) and name not in names and name not in self.top.get(mod, {})
+                and name not in self.values.get(mod, {}))
+
+    def _class_ref(self, mod, expr, names):
+        """Resolve an expression naming a class: a package class key, "BUILTIN", or None if unknown.
+        A package class counts only if its name has no other binding along the way."""
+        ch = dotted(expr)
+        if not ch: return None
+        if len(ch) == 1 and ch[0] not in names:
+            ent = self.top.get(mod, {}).get(ch[0])
+            if ent and ent[0] == "cls" and self._bound_once(mod, ch[0]):
+                return (mod, ent[1])
+            if not ent and self._unshadowed_builtin(mod, ch[0], names): return "BUILTIN"
+            return None
+        b = names.get(ch[0])
+        if not b or not self._bound_once(mod, ch[0]): return None
+        if b[0] == "sym" and len(ch) == 1:
+            m, nm = b[1], b[2]
+        elif b[0] == "mod":
+            m, rest = b[1], ch[1:]
+            while len(rest) > 1 and f"{m}.{rest[0]}" in self.trees: m, rest = f"{m}.{rest[0]}", rest[1:]
+            if len(rest) != 1: return None
+            nm = rest[0]
+        else:
+            return None
+        ent = self.top.get(m, {}).get(nm)
+        if ent and ent[0] == "cls" and self._bound_once(m, nm): return (m, ent[1])
+        return None
+
+    def _bound_once(self, mod, name):
+        """The module binds `name` in exactly one top-level statement and no function rebinds it through `global`."""
+        return self.rebinds.get(mod, {}).get(name, 0) == 1 and name not in self.global_writes.get(mod, set())
+
+    def _build_hierarchy(self):
+        self.cinfo, self.children = {}, {}
+        for (mod, q), cdef in self.classdefs.items():
+            names = self._bind_imports(mod, self.trees[mod][1])
+            bases = [self._class_ref(mod, b, names) for b in cdef.bases]
+            methods = {n.name for n in cdef.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            self.cinfo[(mod, q)] = dict(
+                bases=[b for b in bases if isinstance(b, tuple)],
+                unknown=any(b is None for b in bases) or bool(cdef.keywords),   # unresolved base or metaclass
+                dynamic=bool(methods & {"__getattr__", "__getattribute__"}),
+                new="__new__" in methods, methods=methods)
+            for b in bases:
+                if isinstance(b, tuple): self.children.setdefault(b, set()).add((mod, q))
+
+    def _closure(self, key, step):
+        seen, todo = {key}, [key]
+        while todo:
+            for k in step(todo.pop()):
+                if k in self.cinfo and k not in seen: seen.add(k); todo.append(k)
+        return seen
+
+    def _ancestors(self, key): return self._closure(key, lambda k: self.cinfo.get(k, {}).get("bases", []))
+    def _descendants(self, key): return self._closure(key, lambda k: self.children.get(k, ()))
+
+    def _definers(self, classes, m):
+        """Methods named m defined in the given classes; falls back to every method named m
+        if any of the classes has an unresolved base, a metaclass, or __getattr__."""
+        out, fallback = [], False
+        for k in classes:
+            info = self.cinfo[k]
+            if m in info["methods"]: out.append(f"{k[0]}:{k[1]}.{m}")
+            if info["unknown"] or info["dynamic"]: fallback = True
+        return sorted(set(out + (self.by_method.get(m, []) if fallback else [])))
+
+    def _self_targets(self, mod, cls, m):
+        """self.m() in class cls: the instance may be cls or any package subclass."""
+        key = (mod, cls)
+        if key not in self.cinfo: return self.by_method.get(m, [])
+        classes = set()
+        for d in self._descendants(key): classes |= self._ancestors(d)
+        return self._definers(classes, m)
+
+    def _super_targets(self, mod, cls, m):
+        key = (mod, cls)
+        if key not in self.cinfo: return self.by_method.get(m, [])
+        classes = set()
+        for d in self._descendants(key): classes |= self._ancestors(d)
+        return self._definers(classes - {key}, m)
+
+    def _exact_class(self, key):
+        """True if calling the class yields an instance of exactly that class."""
+        return all(not self.cinfo[k]["new"] and not self.cinfo[k]["unknown"] for k in self._ancestors(key))
+
+    def _local_types(self, fn, mod, names):
+        """Local variables whose every assignment is a plain `x = <value>` in this function with a value of
+        known type: "B" for builtin values (literals, builtin constructors) or a package class key."""
+        params = {a.arg for a in fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs}
+        params |= {a.arg for a in (fn.args.vararg, fn.args.kwarg) if a}
+        bad, kinds = set(params), {}
+        shallow = set(map(id, _walk_shallow(fn)))
+        for n in ast.walk(fn):
+            if isinstance(n, (ast.Global, ast.Nonlocal)): bad |= set(n.names)
+            elif isinstance(n, ast.ExceptHandler) and n.name: bad.add(n.name)
+            elif isinstance(n, ast.alias): bad.add((n.asname or n.name).split(".")[0])
+            elif n is not fn and isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): bad.add(n.name)
+            elif type(n).__name__ in ("MatchAs", "MatchStar") and getattr(n, "name", None): bad.add(n.name)
+            elif type(n).__name__ == "MatchMapping" and getattr(n, "rest", None): bad.add(n.rest)
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+                kinds.setdefault(n.id, [])
+                if id(n) not in shallow: bad.add(n.id)
+        for n in _walk_shallow(fn):
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+                kinds.setdefault(n.targets[0].id, []).append(self._value_kind(n.value, mod, names, params))
+                n.targets[0]._algobank_simple = True
+            elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None:
+                kinds.setdefault(n.target.id, []).append(self._value_kind(n.value, mod, names, params))
+                n.target._algobank_simple = True
+        for n in ast.walk(fn):                     # any other kind of store disqualifies the name
+            if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)) and not getattr(n, "_algobank_simple", False):
+                bad.add(n.id)
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Name) and hasattr(n, "_algobank_simple"): del n._algobank_simple
+        return {v: set(k) for v, k in kinds.items() if v not in bad and k and None not in k}
+
+    BUILTIN_CTORS = {"list", "dict", "set", "tuple", "str", "bytes", "bytearray", "frozenset", "int", "float",
+                     "sorted"}
+
+    def _value_kind(self, v, mod, names, params):
+        if isinstance(v, (ast.Constant, ast.List, ast.Tuple, ast.Dict, ast.Set, ast.JoinedStr,
+                          ast.ListComp, ast.SetComp, ast.DictComp)):
+            return None if isinstance(v, ast.Constant) and v.value is None else "B"
+        if isinstance(v, ast.Call):
+            f = v.func
+            if isinstance(f, ast.Name) and f.id in self.BUILTIN_CTORS and f.id not in params \
+                    and self._unshadowed_builtin(mod, f.id, names):
+                return "B"
+            k = self._class_ref(mod, f, names)
+            if isinstance(k, tuple) and self._exact_class(k): return k
+        return None
+
+    def _local_targets(self, kinds, m):
+        classes = {k for k in kinds if isinstance(k, tuple)}
+        out = set()
+        for k in classes: out |= set(self._definers(self._ancestors(k), m))
+        return sorted(out)
+
     def _name_refs(self, mod, name):
         """Nodes a read of module-level `name` in `mod` depends on."""
         out = []
@@ -208,7 +373,7 @@ class Package:
         return out
 
     # ---- scanning ----------------------------------------------------------
-    def _scan(self, root, mod, cls, names, skeleton=False, local=None):
+    def _scan(self, root, mod, cls, names, skeleton=False, local=None, types=None):
         """-> (edges, caps, flags, ext_roots, stats, reads). Reads are collected when `local` is given:
         the names that are local to the scanned code and so are not module-level reads."""
         edges, caps, flags, ext_roots, reads = set(), set(), set(), set(), set()
@@ -262,14 +427,26 @@ class Package:
                     continue
                 if f.id == "__import__":
                     self._dyn_import(first_const, edges, flags); continue
-            if not ch: continue
+            if not ch:
+                if isinstance(f, ast.Attribute):          # receiver is an expression, not a name
+                    r = f.value
+                    if isinstance(r, ast.Call) and isinstance(r.func, ast.Name) and r.func.id == "super" and cls \
+                            and self._unshadowed_builtin(mod, "super", names):
+                        targets = self._super_targets(mod, cls, f.attr)
+                    elif isinstance(r, (ast.Constant, ast.List, ast.Tuple, ast.Dict, ast.Set, ast.JoinedStr,
+                                        ast.ListComp, ast.SetComp, ast.DictComp)):
+                        targets = []                      # a builtin value
+                    else:
+                        targets = self.by_method.get(f.attr, []); stats["cha"] += len(targets)
+                    edges.update(targets)
+                continue
             # resolve chain through import bindings
             targets, ext = [], None
             p0 = ch[0]
             if p0 in ("self", "cls") and cls and len(ch) == 2:
-                t = f"{mod}:{cls}.{ch[1]}"
-                targets = [t] if t in self.funcs else self.by_method.get(ch[1], [])
-                if t not in self.funcs and targets: stats["cha"] += len(targets)
+                targets = self._self_targets(mod, cls, ch[1])
+            elif types and len(ch) == 2 and p0 in types:
+                targets = self._local_targets(types[p0], ch[1])
             elif len(ch) == 1 and p0 in self.top.get(mod, {}) and p0 not in names:
                 targets = self._sym_nodes(mod, p0)
             elif p0 in names:
@@ -344,7 +521,8 @@ class Package:
             names.update(self._bind_imports(mod, fn))
             declared_global = {g for n in ast.walk(fn) if isinstance(n, ast.Global) for g in n.names}
             local = set(local_map(fn)) - declared_global
-            e, c, fl, er, st, rd = self._scan(fn, mod, cls, names, local=local)
+            types = self._local_types(fn, mod, names)
+            e, c, fl, er, st, rd = self._scan(fn, mod, cls, names, local=local, types=types)
             if cls is not None:
                 rd.add(f"{mod}:={cls.split('.')[0]}")             # a method reads its class's attributes
             if self.effects[mod]:

@@ -137,11 +137,17 @@ The call graph covers the whole package.
 | `from a.b import f as g` | Binds a function, class or submodule. |
 | Relative imports | Resolved from the importing module's package. |
 | Instantiating a class | Resolves to the class's `__init__`. |
-| `self.m()`, `cls.m()` | Resolves to the method in the same class, else falls back to the next row. |
-| `obj.m()` on an object of unknown type | An edge to every method named `m` in the package. This over-approximates: it may invalidate more than needed, never less. |
+| `self.m()`, `cls.m()` | Every definition of `m` in the class's ancestors and in all its package subclasses, since the instance may be a subclass that overrides `m`. |
+| `super().m()` | Every definition of `m` in the ancestors of the class and of its subclasses, other than the class itself. |
+| `x.m()` where `x` is a literal or builtin value | No package method. A local variable counts when every assignment to it is a plain `x = ...` in the function with a literal, a comprehension, or a call to an unshadowed builtin constructor (`list`, `dict`, `str`, `sorted`, ...). |
+| `x.m()` where `x` is a local assigned only from package class constructors | Every definition of `m` in those classes and their ancestors. The constructor counts only if the class name is bound once and never rebound, and the class and its ancestors have no `__new__`, no metaclass and no unresolved base. |
+| `obj.m()` on anything else (parameters, attributes, call results, other locals) | An edge to every method named `m` in the package. This over-approximates: it may invalidate more than needed, never less. |
+| Classes with an unresolved base, a metaclass or `__getattr__` | Calls resolved through them also link to every method named `m`. |
 | Module top-level code | Edges to the top-level code of every package module it imports, and to every package function it calls at import time. |
 | Imports inside a function | Added to that function's name table. |
 | `from x import *` | Flagged `star-import`. The names it brings in are not resolved. |
+
+Narrowing uses only evidence that holds at run time. Type annotations are not used: a function annotated to take one class can be passed any object.
 
 Calls into outside packages are not followed. They contribute to scope (section 4) and pins (section 3.6).
 
@@ -425,7 +431,7 @@ Example admission entry (digests shortened):
 | `v0.1/pkgmerkle.py` | The analyzer: code Merkle tree, call resolution, scope detection and roll-up, `TOP`, code root and scope root. Standard library only. |
 | `v0.1/synth_demo.py` | Test on a synthetic eight-file package with a dynamic plugin loader, a computed `getattr` dispatcher, and plugins that use files and the network. |
 | `v0.1/dexweb_v2.py` | Release-history test over every published wheel of the `dexweb` package. |
-| `v0.1/test_pkgmerkle.py` | Regression tests: full digests, prefixes, module-level dependencies (constants, imported constants, class attributes, `global` writers, references, registries, conditional and star imports), precision (unrelated changes do not spread), and one test per checker condition. |
+| `v0.1/test_pkgmerkle.py` | Regression tests: full digests, prefixes, module-level dependencies (constants, imported constants, class attributes, `global` writers, references, registries, conditional and star imports), precision (unrelated changes do not spread), method receivers (builtins, constructors, parameters, annotations, rebinding, subclass overrides, `super()`, call results, unresolved bases), and one test per checker condition. |
 | `v0.1/algobank_diff.py` | Diff tool: compares two versions of a package and reports new scope, dynamic code, hooks, binaries and dependencies (section 10.6). |
 | `v0.1/test_diff.py` | Tests for the diff tool on synthetic wheels that reproduce real attack patterns. |
 | `v0.1/proofs/CodeRoot.v` | Coq proof of the code root computation (section 10.4). |
@@ -440,11 +446,11 @@ Built: sections 3.1–3.5, 3.6 (recording pins), 3.7, 3.8, 4.2–4.4, and the pr
 
 | Item | Value |
 |---|---|
-| Code root | `9a33a53fa0d6857c9a88de38dfa8b66bee420a668d26dc288764207e093ff28f` |
+| Code root | `39f5dea3511a6adf14f409b143065198031a82916ff21148b58a158d6c7d3791` |
 | Scope | none |
 | Scope root | `140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe` |
-| Nodes | 50 |
-| File SHA-256 | `e6c063ac2c36851dd26ae4d9a0e75fb0970b5ff38a45d5b835e9e456132a6a29` |
+| Nodes | 65 |
+| File SHA-256 | `de25bd5cfdb29394b0881f061a452fd8ba7b78193b06877da0e5043c3805881d` |
 | Python | 3.14 |
 
 To recompute:
@@ -484,7 +490,7 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))"
 
 The dexweb figures come from one small package with one author and should not be generalized.
 
-**Self-analysis:** `pkgmerkle.py` analyzed by itself has 50 nodes, no scope and no `TOP`, and gives identical hashes on repeated runs. A one-line change to `H()` changes `H` and the eight nodes that call it directly or indirectly; the other 41 nodes keep their hashes.
+**Self-analysis:** `pkgmerkle.py` analyzed by itself has 65 nodes, no scope and no `TOP`, and gives identical hashes on repeated runs. A one-line change to `H()` changes `H` and the eight nodes that call it directly or indirectly; the other 56 nodes keep their hashes.
 
 ### 10.4 Proof of the code root
 
@@ -568,7 +574,7 @@ Exit status is 1 when any finding is high, 0 otherwise, and 2 on error, so the t
 | Normal updates of popular packages: requests 2.31.0→2.32.3, urllib3 2.2.1→2.2.2, idna 3.6→3.7, rich 13.7.0→13.7.1, packaging 24.0→24.1 | Four have no medium or high findings. requests has one real change flagged high: a new computed import, run at import time, that selects a character-detection library. |
 | dexweb 4.2.2→4.2.3 | `process` reported as new, entering at `Dexweb.run_git` |
 
-**Reuse on real updates.** With dependencies limited to the module values a function reads, the share of nodes whose hash is unchanged is 70% for rich 13.7.0→13.7.1, 72% for requests 2.31.0→2.32.3, 66% for urllib3 2.2.1→2.2.2, 75% for idna 3.6→3.7 and 38% for packaging 24.0→24.1. With the earlier rule, where a function depended on its module's entire top-level code, rich kept 6% and requests 1%.
+**Reuse on real updates.** The share of nodes whose hash is unchanged is 70% for rich 13.7.0→13.7.1, 70% for requests 2.31.0→2.32.3, 65% for urllib3 2.2.1→2.2.2, 75% for idna 3.6→3.7 and 38% for packaging 24.0→24.1. When a function depended on its module's entire top-level code, rich kept 6% and requests 1%.
 
 The known malicious releases of LiteLLM (1.82.7, 1.82.8, 1.107.0) have been removed from PyPI, so they could not be tested directly.
 
@@ -622,7 +628,7 @@ python3.14 -I v0.1/proofs/check_model.py
 | G4 | Literal imports of outside modules through `import_module` do not add scope. | Scope is under-reported. | Map literal imports through the scope table. |
 | G5 | The scope table is short, Python only, and partly matched by method name. | Unlisted libraries are missed. | A maintained API-to-scope table per language. |
 | G6 | Compiled code is invisible to the analyzer. | Native scope is unknown. | Native tier with confinement and native-code evidence (section 5.7). |
-| G7 | A method call on an object of unknown type links to every package method with that name (`x.append()` to `Text.append`). | Over-approximation, sound but costly: in rich 13.7.0→13.7.1, 771 nodes change hash through dependencies; without this linking, 219 would. | Infer receiver types; link only to methods of matching classes. |
+| G7 | Method calls on parameters, attributes and call results link to every package method with that name. | Over-approximation, sound but costly. In rich 13.7.0→13.7.1, 765 nodes change hash through dependencies. Receiver type inference (section 3.5) leaves this almost unchanged; even perfect typing of every local and call result would reach 747, and without name-based linking it would be 219. The remainder comes from parameters and attributes, which a library cannot narrow soundly: any caller can pass any object. | Attach results that concern a node's own behavior to its own hash plus the scope of what it calls, not to the full Merkle hash; see the roadmap. |
 | G8 | No inclusion proofs for code roots. | A single node cannot be proven without the full leaf list. | Merkle audit paths over the sorted leaves. |
 | G10 | Dynamic behavior outside the listed patterns, such as functions stored in dictionaries and called by key. | Not detected. | Runtime enforcement. |
 | G11 | Hashes depend on the `ast.dump` format of the interpreter. | A different Python version can give a different root. | Record the version with every root; test roots across versions; move to a version-independent serialization. |
@@ -640,7 +646,7 @@ python3.14 -I v0.1/proofs/check_model.py
 7. Implement the admission gates as code.
 8. Run the release-history test on larger packages with many contributors.
 9. Evaluate the component tier for pure-Python parts with `componentize-py`.
-10. Narrow G7 with receiver type inference, then remeasure reuse on rich and requests.
+10. Compositional results: let a result that concerns a node's own behavior (a review of its code, a fuzz run of its logic with callees treated by their declared scope) attach to the node's own hash plus the scope roots of what it calls, instead of the full Merkle hash. Such a result then survives changes in callees that keep their scope. Results about whole behavior keep using the Merkle hash.
 11. Take the diff tool to users: a GitHub Action that comments on pull requests changing `requirements.txt`, `uv.lock` or `poetry.lock`; a shared cache of reports keyed by artifact hash; and an MCP server for coding agents. Measure how often a report changes a decision and how often users mark findings as harmless.
 12. Continue proving the core on the front end, back end and checker split (section 3.8):
     1. Roll-up soundness and `TOP` propagation, with the matching conditions added to the checker.

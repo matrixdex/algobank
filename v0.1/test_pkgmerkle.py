@@ -79,6 +79,59 @@ def test_star_import():
     b = Package({"pkg/__init__.py": "", "pkg/x.py": "LIMIT = 2\n", "pkg/use.py": use})
     assert "pkg.use:f" in changed(a, b)
 
+# ---- receivers of method calls (G7)
+
+TWO = "class Text:\n    def append(self, x):\n        return {t}\n\nclass Other:\n    def append(self, x):\n        return {o}\n\n"
+
+def with_classes(body, t=1, o=1):
+    return Package({"m.py": TWO.format(t=t, o=o) + body})
+
+def test_builtin_receiver_is_not_linked():
+    body = "def f():\n    x = []\n    x.append(1)\n    return x\n"
+    assert "m:f" not in changed(with_classes(body), with_classes(body, o=2))
+
+def test_constructor_receiver_links_to_its_class_only():
+    body = "def f():\n    t = Text()\n    t.append(1)\n"
+    assert "m:f" not in changed(with_classes(body), with_classes(body, o=2))
+    assert "m:f" in changed(with_classes(body), with_classes(body, t=2))
+
+def test_parameter_receiver_stays_conservative():
+    body = "def f(t):\n    t.append(1)\n"
+    assert "m:f" in changed(with_classes(body), with_classes(body, o=2))
+
+def test_annotation_is_not_trusted():
+    """An annotation does not narrow the receiver: the caller may pass any object."""
+    body = "def f(t: Text):\n    t.append(1)\n"
+    assert "m:f" in changed(with_classes(body), with_classes(body, o=2))
+
+def test_rebinding_disqualifies():
+    body = "def make():\n    return Other()\n\ndef f():\n    t = Text()\n    for t in [make()]:\n        pass\n    t.append(1)\n"
+    assert "m:f" in changed(with_classes(body), with_classes(body, o=2))
+
+def test_rebound_class_name_disqualifies():
+    body = "Text = Other\n\ndef f():\n    t = Text()\n    t.append(1)\n"
+    assert "m:f" in changed(with_classes(body), with_classes(body, o=2))
+
+def test_self_call_includes_subclass_override():
+    """A.run calls self.step(); B(A) overrides step, so A.run can run B.step."""
+    src = "class A:\n    def run(self):\n        return self.step()\n    def step(self):\n        return 1\n\n" \
+          "class B(A):\n    def step(self):\n        return {n}\n"
+    assert "m:A.run" in changed(Package({"m.py": src.format(n=2)}), Package({"m.py": src.format(n=3)}))
+
+def test_super_call():
+    src = "class A:\n    def step(self):\n        return {n}\n\nclass B(A):\n    def step(self):\n        return super().step() + 1\n"
+    assert "m:B.step" in changed(Package({"m.py": src.format(n=1)}), Package({"m.py": src.format(n=2)}))
+
+def test_call_on_call_result():
+    """A method called on the result of another call is linked by name."""
+    body = "def get():\n    return Text()\n\ndef f():\n    return get().append(1)\n"
+    assert "m:f" in changed(with_classes(body), with_classes(body, t=2))
+
+def test_unresolved_base_stays_conservative():
+    src = "from somewhere import Base\n\nclass C(Base):\n    pass\n\nclass Other:\n    def append(self, x):\n        return {o}\n\n" \
+          "def f():\n    c = C()\n    c.append(1)\n"
+    assert "m:f" in changed(Package({"m.py": src.format(o=1)}), Package({"m.py": src.format(o=2)}))
+
 def test_prefixes():
     """Leaves and interior nodes use different prefixes."""
     p = Package({"m.py": "def f():\n    return 1\n"})
