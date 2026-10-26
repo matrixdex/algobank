@@ -287,6 +287,31 @@ The policy states which results each scope and tier requires. A compute part in 
 
 For a given code root, the work frontier is the set of nodes that lack a valid result for a required check. Agents and reviewers work on the frontier and nothing else.
 
+### 6.6 Formal proofs
+
+A proof is the strongest result type: it shows that a node meets a specification for every input, not only the inputs tested. A proof result records:
+
+- the node hash it covers;
+- the specification digest;
+- the prover and proof checker, with digests and versions;
+- the proof artifact digest.
+
+**Specifications are artifacts.** A proof shows that code matches its specification, not that the specification is right. Specifications are hashed, logged and reviewed like code. A proof is valid only while both the node hash and the specification digest are unchanged.
+
+**Rechecking is cheap.** Finding a proof is expensive; checking one is fast and deterministic. Algobank reruns the proof checker on submitted proofs, which makes proofs well suited to the verification in section 6.2. Proofs written by AI agents are accepted on the same terms: the checker decides, not the author.
+
+**Scope of a proof.** A proof holds for the model it was checked against. It assumes the compiler, runtime and hardware behave as modeled, and does not cover side channels. Confinement (section 5) still applies to proven parts.
+
+**Where proofs apply.**
+
+- Compute parts, which are small and pure: parsers, codecs, numeric routines, cryptographic primitives.
+- The trusted base that every admission depends on: the analyzer, the code and log Merkle functions, signature checks, and the runner's self-check.
+- Native code, where a proof of memory safety addresses the main weakness of the native tier (section 5.7).
+
+Python has no mature general verifier. Proven parts are written in a verifiable subset or in a verification language, such as F\*, Lean, Dafny, or Rust with Verus or Kani, and called from Python. HACL\*, verified cryptography written in F\* and compiled to C, is an example already used in production.
+
+**Policy.** Proofs are optional evidence. The evidence policy (section 6.4) may accept a proof in place of other results; for example, a proven parser of untrusted input may meet a requirement that would otherwise demand heavy fuzzing. Parts without proofs are never rejected for lacking one.
+
 ## 7. Admission [spec]
 
 A package becomes a part only when all gates pass:
@@ -473,6 +498,7 @@ The wheels are parsed and never run.
 7. Implement the admission gates as code.
 8. Run the release-history test on larger packages with many contributors.
 9. Evaluate the component tier for pure-Python parts with `componentize-py`.
+10. Define the proof result format and specify, then prove, one part of the trusted base, starting with the code root computation.
 
 ## References
 
@@ -485,3 +511,4 @@ The wheels are parsed and never run.
 - [componentize-py](https://www.fermyon.com/blog/introducing-componentize-py) and [ssl in WASI components](https://urllib3future.readthedocs.io/en/latest/wasi.html)
 - [PEP 783](https://peps.python.org/0783) and [Pyodide 314](https://blog.pyodide.org/posts/314-release): Emscripten packaging
 - [Landlock networking, Linux 6.7](https://phoronix.com/news/Landlock-Networking-Linux-6.7)
+- [HACL\*](https://github.com/hacl-star/hacl-star): formally verified cryptography
