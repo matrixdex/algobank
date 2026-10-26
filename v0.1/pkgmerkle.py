@@ -265,15 +265,16 @@ class Package:
 
     # ---- package root: one package is one Merkle tree ----------------------
     def leaves(self):
-        """One leaf per node. The leaf commits to the node id (the public name) and the node's Merkle hash."""
-        return sorted(H(f"{nid}={n['merkle']}") for nid, n in self.nodes.items())
+        """One leaf per node. The leaf commits to the node id (the public name) and the node's Merkle hash.
+        Leaf inputs start with 0x00 and interior inputs with 0x01, so the two can never be confused."""
+        return sorted(H(f"\x00{nid}={n['merkle']}") for nid, n in self.nodes.items())
 
     def root(self):
         """Binary Merkle root over the sorted leaves."""
         level = self.leaves() or [H("empty")]
         while len(level) > 1:
             if len(level) % 2: level = level + [level[-1]]
-            level = [H(level[i] + level[i + 1]) for i in range(0, len(level), 2)]
+            level = [H("\x01" + level[i] + level[i + 1]) for i in range(0, len(level), 2)]
         return level[0]
 
     def scope(self):

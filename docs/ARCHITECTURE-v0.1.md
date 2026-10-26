@@ -56,7 +56,7 @@ Banking and insurance (vouches, deposits, penalties, interest, payouts) sit on t
 | **Node** | A function or method (`module:qualname`), or a module's top-level code (`module:<module>`). |
 | **Own hash** | The hash of a node's normalized syntax tree alone. |
 | **Merkle hash** | The own hash combined with the Merkle hashes of every node it calls and the pins of outside packages it uses. |
-| **Leaf** | `H(node_id + "=" + merkle_hash)`. It commits to the node's public name and its content. |
+| **Leaf** | `H(0x00 ‖ node_id ‖ "=" ‖ merkle_hash)`. It commits to the node's public name and its content. |
 | **Code root** | The binary Merkle root over a package's sorted leaves. The package's identity. |
 | **Scope** | A power the code can use, such as `file` or `network`. |
 | **Scope root** | The hash of the sorted set of all scopes in a package. |
@@ -98,9 +98,11 @@ Recursion and mutual recursion form cycles. The call graph is reduced to strongl
 
 ### 3.4 Code root
 
-1. Compute every node's leaf.
+1. Compute every node's leaf: `H(0x00 ‖ node_id ‖ "=" ‖ merkle_hash)`.
 2. Sort the leaves.
-3. Hash pairs upward, duplicating the last leaf of an odd-sized level, until one root remains.
+3. Hash pairs upward as `H(0x01 ‖ left ‖ right)`, duplicating the last leaf of an odd-sized level, until one root remains.
+
+The 0x00 and 0x01 prefixes separate leaf inputs from interior inputs, as in RFC 6962, so a leaf can never be mistaken for an interior node. A package with no nodes has the root `H("empty")`.
 
 The root commits to names and content, because names are the public interface. Renaming a function changes the root; reformatting does not.
 
@@ -109,7 +111,7 @@ Proven properties (section 10.4), assuming a collision-resistant hash:
 - **Binding.** Two packages have the same code root only if they have the same set of (node id, Merkle hash) pairs.
 - **Order independence.** The root depends only on that set, not on the order of nodes.
 
-Binding depends on node ids being unique. With repeated leaves the rule that duplicates an odd last leaf makes different lists collide: `[a, b, c]` and `[a, b, c, c]` have the same root. Leaves and interior nodes cannot be confused because a leaf's input contains `=` and an interior node's input is 24 hex characters.
+Binding depends on node ids being unique. With repeated leaves the rule that duplicates an odd last leaf makes different lists collide: `[a, b, c]` and `[a, b, c, c]` have the same root.
 
 ### 3.5 Call resolution
 
@@ -408,11 +410,11 @@ Built: sections 3.1–3.5, 3.6 (recording pins), 3.7 (truncated digests), 4.2–
 
 | Item | Value |
 |---|---|
-| Code root | `5af18aa47d8a` |
+| Code root | `4724cc125b39` |
 | Scope | none |
 | Scope root | `140bedbf9c3f` |
 | Nodes | 25 |
-| File SHA-256 | `e7edbf91da0cf836b93014ff7b03db0512ba53487de42ec7ccd84d29b46f50be` |
+| File SHA-256 | `d362168819df7a87c59c0c3e1d23667214016a596ed9a69bb1506de0d9a4c8b8` |
 | Python | 3.14 |
 
 To recompute:
@@ -468,7 +470,7 @@ A package is well formed when it has no repeated pair and every Merkle hash is a
 
 **Assumptions.** The proof is parameterized over the hash and the sort, with these hypotheses:
 
-1. `H` returns 12 lowercase hex characters and is injective. Injectivity idealizes collision resistance; truncated 12-character digests do not meet it in practice (G9).
+1. `H` returns 12 characters and is injective. Injectivity idealizes collision resistance; truncated 12-character digests do not meet it in practice (G9).
 2. The sort returns a permutation of its input, and the same output for inputs that are permutations of each other. Python's `sorted` on strings satisfies both.
 
 `Print Assumptions code_root_correct` reports no axioms beyond these hypotheses. The trusted base is the Coq kernel and the correspondence between the model and the Python code.

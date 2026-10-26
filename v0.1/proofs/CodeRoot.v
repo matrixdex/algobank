@@ -10,8 +10,8 @@
       the sets of pairs are equal.
 
     Assumptions, stated as section hypotheses:
-    - [H] returns 12 lowercase hex characters (as [hexdigest()[:12]] does)
-      and is injective. Injectivity idealizes collision resistance.
+    - [H] returns 12 characters (as [hexdigest()[:12]] does) and is
+      injective. Injectivity idealizes collision resistance.
     - [srt] returns a permutation of its input, and the same output for
       inputs that are permutations of each other (Python's [sorted] on
       strings).
@@ -19,13 +19,13 @@
     The Python source being modeled:
 <<
     def leaves(self):
-        return sorted(H(f"{nid}={n['merkle']}") for nid, n in self.nodes.items())
+        return sorted(H(f"\x00{nid}={n['merkle']}") for nid, n in self.nodes.items())
 
     def root(self):
         level = self.leaves() or [H("empty")]
         while len(level) > 1:
             if len(level) % 2: level = level + [level[-1]]
-            level = [H(level[i] + level[i + 1]) for i in range(0, len(level), 2)]
+            level = [H("\x01" + level[i] + level[i + 1]) for i in range(0, len(level), 2)]
         return level[0]
 >>
 *)
@@ -35,19 +35,11 @@ Import ListNotations.
 
 (** ** Characters and strings *)
 
-Definition hexdigits : list ascii := ["0";"1";"2";"3";"4";"5";"6";"7";"8";"9";"a";"b";"c";"d";"e";"f"]%char.
-Definition is_hex (c : ascii) : bool := existsb (Ascii.eqb c) hexdigits.
+(** Domain separation prefixes: 0x00 for leaf inputs, 0x01 for interior inputs. *)
+Definition P0 : ascii := Ascii false false false false false false false false.
+Definition P1 : ascii := Ascii true false false false false false false false.
 Definition EQ : ascii := "="%char.
 Definition empty_s : list ascii := ["e";"m";"p";"t";"y"]%char.
-
-Lemma is_hex_EQ : is_hex EQ = false.
-Proof. reflexivity. Qed.
-
-Lemma hex_no_EQ : forall l, forallb is_hex l = true -> ~ In EQ l.
-Proof.
-  intros l Hl Hin. rewrite forallb_forall in Hl.
-  specialize (Hl EQ Hin). rewrite is_hex_EQ in Hl. discriminate.
-Qed.
 
 Lemma app_same_len {A} (a b c d : list A) :
   length a = length c -> a ++ b = c ++ d -> a = c /\ b = d.
@@ -75,38 +67,34 @@ Section CodeRoot.
 
 Variable H : list ascii -> list ascii.
 Hypothesis H_len : forall s, length (H s) = 12.
-Hypothesis H_hex : forall s, forallb is_hex (H s) = true.
 Hypothesis H_inj : forall s t, H s = H t -> s = t.
 
-Definition Dg (d : list ascii) : Prop := length d = 12 /\ forallb is_hex d = true.
+(** A digest: any output of [H]. *)
+Definition Dg (d : list ascii) : Prop := length d = 12.
 
 Lemma H_Dg : forall s, Dg (H s).
-Proof. intro s. split; [apply H_len | apply H_hex]. Qed.
+Proof. apply H_len. Qed.
 
-(** [leaf nid m] is [H(f"{nid}={m}")]; [node a b] is [H(a + b)]. *)
-Definition leaf (nid m : list ascii) : list ascii := H (nid ++ EQ :: m).
-Definition node (a b : list ascii) : list ascii := H (a ++ b).
+(** [leaf nid m] is [H(f"\x00{nid}={m}")]; [node a b] is [H("\x01" + a + b)]. *)
+Definition leaf (nid m : list ascii) : list ascii := H (P0 :: nid ++ EQ :: m).
+Definition node (a b : list ascii) : list ascii := H (P1 :: a ++ b).
 
-Lemma leaf_ne_node : forall nid m a b, Dg a -> Dg b -> leaf nid m <> node a b.
+(** The prefixes alone separate leaves from interior nodes. *)
+Lemma leaf_ne_node : forall nid m a b, leaf nid m <> node a b.
 Proof.
-  unfold leaf, node. intros nid m a b [_ Ha] [_ Hb] E. apply H_inj in E.
-  assert (Hin : In EQ (a ++ b)).
-  { rewrite <- E. apply in_or_app. right. left. reflexivity. }
-  apply in_app_or in Hin. destruct Hin as [Hin | Hin].
-  - exact (hex_no_EQ a Ha Hin).
-  - exact (hex_no_EQ b Hb Hin).
+  unfold leaf, node. intros nid m a b E. apply H_inj in E. discriminate.
 Qed.
 
 Lemma node_inj : forall a b c d, Dg a -> Dg c -> node a b = node c d -> a = c /\ b = d.
 Proof.
-  unfold node. intros a b c d [La _] [Lc _] E. apply H_inj in E.
+  unfold node, Dg. intros a b c d La Lc E. apply H_inj in E. injection E as E.
   apply app_same_len; [congruence | exact E].
 Qed.
 
 Lemma leaf_inj : forall n1 m1 n2 m2, length m1 = 12 -> length m2 = 12 ->
   leaf n1 m1 = leaf n2 m2 -> n1 = n2 /\ m1 = m2.
 Proof.
-  unfold leaf. intros n1 m1 n2 m2 L1 L2 E. apply H_inj in E.
+  unfold leaf. intros n1 m1 n2 m2 L1 L2 E. apply H_inj in E. injection E as E.
   apply (f_equal (@rev ascii)) in E. rewrite !rev_app_distr in E. simpl in E.
   apply app_same_len in E.
   - destruct E as [E1 E2]. apply app_inj_tail in E1. destruct E1 as [E1 _].
@@ -180,10 +168,10 @@ Proof.
   - apply Ht_cases in H'.
     destruct H' as [[-> _] | [h0 [a [b [-> [Ha [Hb E]]]]]]].
     + reflexivity.
-    + exfalso. exact (leaf_ne_node nid m a b (Ht_Dg _ _ Ha) (Ht_Dg _ _ Hb) E).
+    + exfalso. exact (leaf_ne_node nid m a b E).
   - apply Ht_cases in H'.
     destruct H' as [[-> [nid [m [_ E]]]] | [h0 [a' [b' [-> [Ha' [Hb' E]]]]]]].
-    + exfalso. exact (leaf_ne_node nid m a b (Ht_Dg _ _ Ha) (Ht_Dg _ _ Hb) (eq_sym E)).
+    + exfalso. exact (leaf_ne_node nid m a b (eq_sym E)).
     + destruct (node_inj a b a' b' (Ht_Dg _ _ Ha) (Ht_Dg _ _ Ha') E) as [Eaa _].
       subst a'. f_equal. apply IHa. exact Ha'.
 Qed.
@@ -191,15 +179,9 @@ Qed.
 Lemma empty_not_Ht : forall g, ~ Ht g (H empty_s).
 Proof.
   intros g Hg. apply Ht_cases in Hg.
-  destruct Hg as [[_ [nid [m [_ E]]]] | [h0 [a [b [_ [Ha [Hb E]]]]]]].
-  - unfold leaf in E. apply H_inj in E.
-    assert (Hin : In EQ empty_s).
-    { rewrite E. apply in_or_app. right. left. reflexivity. }
-    unfold EQ, empty_s in Hin. simpl in Hin. intuition discriminate.
-  - unfold node in E. apply H_inj in E. apply (f_equal (@length ascii)) in E.
-    rewrite app_length in E.
-    destruct (Ht_Dg _ _ Ha) as [La _]. destruct (Ht_Dg _ _ Hb) as [Lb _].
-    unfold empty_s in E. simpl in E. lia.
+  destruct Hg as [[_ [nid [m [_ E]]]] | [h0 [a [b [_ [_ [_ E]]]]]]].
+  - unfold leaf in E. apply H_inj in E. discriminate.
+  - unfold node in E. apply H_inj in E. discriminate.
 Qed.
 
 (** ** Properties of one level *)
