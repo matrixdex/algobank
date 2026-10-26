@@ -12,10 +12,11 @@ Improvements over merkle_code.py / release_reuse.py:
 import ast, copy, hashlib, sys
 
 TOP = "TOP"
+DIGEST_LEN = 64      # full SHA-256 in hex
 
 def H(s):
     if isinstance(s, str): s = s.encode()
-    return hashlib.sha256(s).hexdigest()[:12]
+    return hashlib.sha256(s).hexdigest()
 
 MOD_CAPS = {"socket": "network", "ssl": "network", "urllib": "network", "http": "network", "requests": "network",
             "httpx": "network", "aiohttp": "network", "ftplib": "network", "smtplib": "network",
@@ -246,6 +247,12 @@ class Package:
             names.update(self._bind_imports(mod, fn))
             e, c, fl, er, st = self._scan(fn, mod, cls, names)
             raw[nid] = dict(own=H(canon_fn(fn)), size=size(fn), edges=e, caps=c, flags=fl, ext=er, stats=st)
+        for nid, (fn, mod, cls) in self.funcs.items():
+            # a function reads its module's constants, class attributes and imported names
+            raw[nid]["edges"].add(f"{mod}:<module>")
+            # module state written through `global` is read by every function in the module
+            if any(isinstance(n, ast.Global) for n in ast.walk(fn)):
+                raw[f"{mod}:<module>"]["edges"].add(nid)
         for r in raw.values(): r["edges"] = {x for x in r["edges"] if x in raw}
         graph = {k: sorted(v["edges"]) for k, v in raw.items()}
         merk, caps, flags = {}, {}, {}
@@ -272,6 +279,8 @@ class Package:
     def root(self):
         """Binary Merkle root over the sorted leaves."""
         level = self.leaves() or [H("empty")]
+        if any(len(d) != DIGEST_LEN for d in level):
+            raise ValueError("every digest in a tree must have the same length")
         while len(level) > 1:
             if len(level) % 2: level = level + [level[-1]]
             level = [H("\x01" + level[i] + level[i + 1]) for i in range(0, len(level), 2)]

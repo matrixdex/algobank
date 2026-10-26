@@ -1,8 +1,8 @@
 (* Reads one package per line ("nid merkle nid merkle ..."), prints its code root.
-   H is the first 12 hex characters of MD5, the same stand-in the Python side uses. *)
+   H is the MD5 hex digest written twice (64 characters), the same stand-in the Python side uses. *)
 let explode s = List.init (String.length s) (String.get s)
 let implode l = String.of_seq (List.to_seq l)
-let h cs = explode (String.sub (Digest.to_hex (Digest.string (implode cs))) 0 12)
+let h cs = let d = Digest.to_hex (Digest.string (implode cs)) in explode (d ^ d)
 let srt l = List.sort compare l
 
 let rec pairs = function

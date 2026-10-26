@@ -10,7 +10,7 @@
       the sets of pairs are equal.
 
     Assumptions, stated as section hypotheses:
-    - [H] returns 12 characters (as [hexdigest()[:12]] does) and is
+    - [H] returns 64 characters (as SHA-256 [hexdigest()] does) and is
       injective. Injectivity idealizes collision resistance.
     - [srt] returns a permutation of its input, and the same output for
       inputs that are permutations of each other (Python's [sorted] on
@@ -23,6 +23,7 @@
 
     def root(self):
         level = self.leaves() or [H("empty")]
+        if any(len(d) != DIGEST_LEN for d in level): raise ValueError(...)
         while len(level) > 1:
             if len(level) % 2: level = level + [level[-1]]
             level = [H("\x01" + level[i] + level[i + 1]) for i in range(0, len(level), 2)]
@@ -66,11 +67,11 @@ Section CodeRoot.
 (** ** Hash function *)
 
 Variable H : list ascii -> list ascii.
-Hypothesis H_len : forall s, length (H s) = 12.
+Hypothesis H_len : forall s, length (H s) = 64.
 Hypothesis H_inj : forall s t, H s = H t -> s = t.
 
 (** A digest: any output of [H]. *)
-Definition Dg (d : list ascii) : Prop := length d = 12.
+Definition Dg (d : list ascii) : Prop := length d = 64.
 
 Lemma H_Dg : forall s, Dg (H s).
 Proof. apply H_len. Qed.
@@ -91,7 +92,7 @@ Proof.
   apply app_same_len; [congruence | exact E].
 Qed.
 
-Lemma leaf_inj : forall n1 m1 n2 m2, length m1 = 12 -> length m2 = 12 ->
+Lemma leaf_inj : forall n1 m1 n2 m2, length m1 = 64 -> length m2 = 64 ->
   leaf n1 m1 = leaf n2 m2 -> n1 = n2 /\ m1 = m2.
 Proof.
   unfold leaf. intros n1 m1 n2 m2 L1 L2 E. apply H_inj in E. injection E as E.
@@ -142,7 +143,7 @@ Proof. intros a b t. rewrite red_equation. reflexivity. Qed.
 (** ** Heights: leaves are height 0, a node over two height-h values is h+1 *)
 
 Inductive Ht : nat -> list ascii -> Prop :=
-| Ht0 : forall nid m, length m = 12 -> Ht 0 (leaf nid m)
+| Ht0 : forall nid m, length m = 64 -> Ht 0 (leaf nid m)
 | HtS : forall h a b, Ht h a -> Ht h b -> Ht (S h) (node a b).
 
 Lemma Ht_Dg : forall h d, Ht h d -> Dg d.
@@ -154,7 +155,7 @@ Proof.
 Qed.
 
 Lemma Ht_cases : forall h d, Ht h d ->
-  (h = 0 /\ exists nid m, length m = 12 /\ d = leaf nid m) \/
+  (h = 0 /\ exists nid m, length m = 64 /\ d = leaf nid m) \/
   (exists h0 a b, h = S h0 /\ Ht h0 a /\ Ht h0 b /\ d = node a b).
 Proof.
   intros h d Hd. destruct Hd as [nid m Lm | h a b Ha Hb].
@@ -320,9 +321,9 @@ Definition code_root (P : list (list ascii * list ascii)) : list ascii :=
   red (srt (leafs P)).
 
 (** Well formed: no repeated pair (node ids are dict keys), and every
-    Merkle hash is a 12-character digest. *)
+    Merkle hash is a 64-character digest. *)
 Definition WF (P : list (list ascii * list ascii)) : Prop :=
-  NoDup P /\ Forall (fun p => length (snd p) = 12) P.
+  NoDup P /\ Forall (fun p => length (snd p) = 64) P.
 
 Lemma leafs_Ht : forall P, WF P -> Forall (Ht 0) (leafs P).
 Proof.
@@ -388,7 +389,7 @@ Lemma mem_transfer : forall P1 P2 x, WF P1 -> WF P2 ->
   srt (leafs P1) = srt (leafs P2) -> In x P1 -> In x P2.
 Proof.
   intros P1 P2 x [N1 F1] [N2 F2] S Hx.
-  assert (Lx : length (snd x) = 12) by (rewrite Forall_forall in F1; exact (F1 x Hx)).
+  assert (Lx : length (snd x) = 64) by (rewrite Forall_forall in F1; exact (F1 x Hx)).
   assert (Hin : In (leaf (fst x) (snd x)) (leafs P2)).
   { apply (Permutation_in _ (srt_perm _)). rewrite <- S.
     apply (Permutation_in _ (Permutation_sym (srt_perm _))).

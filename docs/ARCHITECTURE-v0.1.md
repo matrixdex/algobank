@@ -94,6 +94,8 @@ Rule: if there is doubt whether something changes behavior, it stays in the hash
 
 For a node outside any cycle, `merkle = H(base + own)`, where `base` combines the node's own hash, the Merkle hashes of its callees, and the sorted pins of outside packages it uses.
 
+Every function also depends on its module's top-level code, which holds the module's constants, class attributes and imports, and itself depends on the top-level code of the package modules it imports. A change to a constant therefore changes the hash of every function in the module, including constants imported from other modules. A function that writes module state through `global` is a dependency of the module's top-level code, so every reader of that state depends on the writer. This over-invalidates within a module and never under-invalidates for these cases.
+
 Recursion and mutual recursion form cycles. The call graph is reduced to strongly connected components (Tarjan's algorithm). Each component is hashed as one unit, and each member then combines that value with its own hash.
 
 ### 3.4 Code root
@@ -139,7 +141,7 @@ A garden part may depend only on other garden parts, pinned by digest. v0.1 reco
 
 ### 3.7 Hash function
 
-`H` is SHA-256. The v0.1 prototype truncates digests to 12 hex characters for readable output; production uses full digests. Hashes come from Python's `ast.dump`, whose format can differ between interpreter versions, so the interpreter version is recorded with every root.
+`H` is SHA-256, written as 64 hex characters. Every digest in a tree has the same length; `root()` raises an error otherwise, because splitting a concatenated input back into its halves relies on that length. Hashes come from Python's `ast.dump`, whose format can differ between interpreter versions, so the interpreter version is recorded with every root.
 
 ## 4. Scope
 
@@ -399,10 +401,11 @@ Example admission entry (digests shortened):
 | `v0.1/pkgmerkle.py` | The analyzer: code Merkle tree, call resolution, scope detection and roll-up, `TOP`, code root and scope root. Standard library only. |
 | `v0.1/synth_demo.py` | Test on a synthetic eight-file package with a dynamic plugin loader, a computed `getattr` dispatcher, and plugins that use files and the network. |
 | `v0.1/dexweb_v2.py` | Release-history test over every published wheel of the `dexweb` package. |
+| `v0.1/test_pkgmerkle.py` | Regression tests: full digests, prefixes, and module-level dependencies (constants, imported constants, class attributes, `global` writers). |
 | `v0.1/proofs/CodeRoot.v` | Coq proof of the code root computation (section 10.4). |
 | `v0.1/proofs/check_model.py`, `Extract.v`, `driver.ml` | Check that the proven model computes the same root as `pkgmerkle.py`. |
 
-Built: sections 3.1–3.5, 3.6 (recording pins), 3.7 (truncated digests), 4.2–4.4, and the proof of section 3.4. Everything else is specified.
+Built: sections 3.1–3.5, 3.6 (recording pins), 3.7, 4.2–4.4, and the proof of section 3.4. Everything else is specified.
 
 ### 10.2 First garden part
 
@@ -410,11 +413,11 @@ Built: sections 3.1–3.5, 3.6 (recording pins), 3.7 (truncated digests), 4.2–
 
 | Item | Value |
 |---|---|
-| Code root | `4724cc125b39` |
+| Code root | `7384aea81327781de39670cfd00d6f2a98df4d225ae16347fca00578ca3c3560` |
 | Scope | none |
-| Scope root | `140bedbf9c3f` |
+| Scope root | `140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe` |
 | Nodes | 25 |
-| File SHA-256 | `d362168819df7a87c59c0c3e1d23667214016a596ed9a69bb1506de0d9a4c8b8` |
+| File SHA-256 | `36b5cf61663d3b6af168c75268cdd7b12b3dfa817ad6d783db672b4f96915fd7` |
 | Python | 3.14 |
 
 To recompute:
@@ -450,6 +453,7 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))"
 | Scope change detected | `process` first appears in 4.2.3 |
 | Scope per module (4.2.5) | `dexweb.dexgen`: `file`, 7 of 22 nodes pure; `dexweb.dexweb`: `file`, `process`, 1 of 11 pure |
 | Dependencies | 4, none pinned |
+| Module-level dependency | In 4.2.4 a module's top-level code changed; three functions that read it (`Dexweb.__init__`, `publish_folder`, `run_git`) change hash only because functions depend on module-level code. Without that dependency, their earlier results would have been reused wrongly. |
 
 The dexweb figures come from one small package with one author and should not be generalized.
 
@@ -466,11 +470,11 @@ The dexweb figures come from one small package with one author and should not be
 | `code_root_correct` | For well-formed packages, the code roots are equal exactly when the sets of pairs are equal. |
 | `dup_collision` | Without unique leaves, binding fails: `[a, b, c]` and `[a, b, c, c]` reduce to the same root. |
 
-A package is well formed when it has no repeated pair and every Merkle hash is a 12-character digest; `pkgmerkle.py` guarantees both, because node ids are dictionary keys and Merkle hashes are outputs of `H`.
+A package is well formed when it has no repeated pair and every Merkle hash is a 64-character digest; `pkgmerkle.py` guarantees both, because node ids are dictionary keys and Merkle hashes are outputs of `H`.
 
 **Assumptions.** The proof is parameterized over the hash and the sort, with these hypotheses:
 
-1. `H` returns 12 characters and is injective. Injectivity idealizes collision resistance; truncated 12-character digests do not meet it in practice (G9).
+1. `H` returns 64 characters and is injective. Injectivity idealizes the collision resistance of SHA-256.
 2. The sort returns a permutation of its input, and the same output for inputs that are permutations of each other. Python's `sorted` on strings satisfies both.
 
 `Print Assumptions code_root_correct` reports no axioms beyond these hypotheses. The trusted base is the Coq kernel and the correspondence between the model and the Python code.
@@ -482,6 +486,9 @@ A package is well formed when it has no repeated pair and every Merkle hash is a
 Requirements: Python 3.14, standard library only. The proof additionally needs Coq 8.18 and, for the model check, OCaml with `ocamlfind`.
 
 ```
+# regression tests
+python3.14 -I v0.1/test_pkgmerkle.py
+
 # synthetic package, with runtime observation (any writable scratch directory)
 python3.14 -I v0.1/synth_demo.py /path/to/scratch
 
@@ -514,7 +521,7 @@ python3.14 -I v0.1/proofs/check_model.py
 
 | # | Limitation | Effect | Remedy |
 |---|---|---|---|
-| G1 | A function's hash does not depend on module-level values it reads. | Changing a module constant leaves a dependent function's hash unchanged, so a stale result can survive. Soundness gap. | Add edges from each function to the module-level names it reads, or to its `<module>` node; measure the cost on release histories first. |
+| G1 | Module state changed by mutation (for example, appending to a module-level list) in a function that does not declare `global`. | A reader's hash does not depend on the mutating function. | Treat functions that mutate module-level objects as writers; forbid mutable module state in compute parts. |
 | G2 | `__getattr__` definitions and `from x import *` are flagged but do not produce `TOP`. | Inconsistent with section 4.4. | Add both flags to the `TOP` rule. |
 | G3 | Targets of computed `getattr` are not part of the hash. | A dispatcher can reach changed code without being invalidated. | Reject unbounded dynamic code at admission, or require an explicit target list that joins the hash. |
 | G4 | Literal imports of outside modules through `import_module` do not add scope. | Scope is under-reported. | Map literal imports through the scope table. |
@@ -522,7 +529,6 @@ python3.14 -I v0.1/proofs/check_model.py
 | G6 | Compiled code is invisible to the analyzer. | Native scope is unknown. | Native tier with confinement and native-code evidence (section 5.7). |
 | G7 | Methods in base classes are reached only through the name-based fallback. | Over-approximation. | Class-hierarchy resolution. |
 | G8 | No inclusion proofs for code roots. | A single node cannot be proven without the full leaf list. | Merkle audit paths over the sorted leaves. |
-| G9 | Digests truncated to 12 hex characters. | Not collision-safe, so the hash assumption of the code root proof (section 10.4) does not hold in practice. | Full SHA-256. |
 | G10 | Dynamic behavior outside the listed patterns, such as functions stored in dictionaries and called by key. | Not detected. | Runtime enforcement. |
 | G11 | Hashes depend on the `ast.dump` format of the interpreter. | A different Python version can give a different root. | Record the version with every root; test roots across versions; move to a version-independent serialization. |
 | G12 | Introspection through dunder attributes or frames can reach effectful functions without importing them. | Such code is reported with no scope. Soundness gap. | Treat introspection as `TOP`; allowlist for compute parts (section 4.5); enforce at the boundary. |
@@ -530,16 +536,23 @@ python3.14 -I v0.1/proofs/check_model.py
 
 ## 12. Roadmap (v0.2)
 
-1. Close the soundness gaps G1 and G12, and G2 and G3 so `TOP` is complete.
+1. Close the soundness gap G12, and G2 and G3 so `TOP` is complete.
 2. Add `clock` and `entropy` detection (G13) and a per-module scope report.
-3. Use full digests, add inclusion proofs, and record the interpreter version with each root (G8, G9, G11).
+3. Add inclusion proofs and record the interpreter version with each root (G8, G11).
 4. Implement the scope manifest and the declared-versus-detected check.
 5. Build the native-tier runner: profile from declared scope, system-call allowlist, self-check, fail closed, profile digest recorded.
 6. Stand up a minimal transparency log in the C2SP formats, with the analyzer's code root as its first admission.
 7. Implement the admission gates as code.
 8. Run the release-history test on larger packages with many contributors.
 9. Evaluate the component tier for pure-Python parts with `componentize-py`.
-10. Define the proof result format, record the code root proof in it, and prove the next part of the trusted base: node Merkle hashing (section 3.3).
+10. Prove the core, in this order, starting from a split of the analyzer into an untrusted front end (parsing, call graph, direct facts per node) and a verified back end (hashing, components, roll-up, `TOP`, root):
+    1. Merkle soundness: an unchanged Merkle hash means the node's code and everything it reaches are unchanged.
+    2. Roll-up soundness and `TOP` propagation.
+    3. Reuse soundness: a result accepted for a hash stays valid wherever that hash appears.
+    4. The result acceptance rule (section 6.2).
+
+    Where proving an algorithm costs too much, a proven checker verifies its output instead; for example, a checker for the strongly connected components that Tarjan's algorithm returns.
+11. Define the proof result format and record each core proof in it.
 
 ## References
 
