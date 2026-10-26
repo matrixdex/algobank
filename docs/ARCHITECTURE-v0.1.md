@@ -628,7 +628,7 @@ python3.14 -I v0.1/proofs/check_model.py
 | G4 | Literal imports of outside modules through `import_module` do not add scope. | Scope is under-reported. | Map literal imports through the scope table. |
 | G5 | The scope table is short, Python only, and partly matched by method name. | Unlisted libraries are missed. | A maintained API-to-scope table per language. |
 | G6 | Compiled code is invisible to the analyzer. | Native scope is unknown. | Native tier with confinement and native-code evidence (section 5.7). |
-| G7 | Method calls on parameters, attributes and call results link to every package method with that name. | Over-approximation, sound but costly. In rich 13.7.0→13.7.1, 765 nodes change hash through dependencies. Receiver type inference (section 3.5) leaves this almost unchanged; even perfect typing of every local and call result would reach 747, and without name-based linking it would be 219. The remainder comes from parameters and attributes, which a library cannot narrow soundly: any caller can pass any object. | Attach results that concern a node's own behavior to its own hash plus the scope of what it calls, not to the full Merkle hash; see the roadmap. |
+| G7 | Method calls on parameters, attributes and call results link to every package method with that name. | Over-approximation, sound but costly. In rich 13.7.0→13.7.1, 765 nodes change hash through dependencies. Receiver type inference (section 3.5) leaves this almost unchanged; even perfect typing of every local and call result would reach 747, and without name-based linking it would be 219. The remainder comes from parameters and attributes, which a library cannot narrow soundly: any caller can pass any object. | Accepted as the cost of soundness. Results stay keyed to the full Merkle hash. |
 | G8 | No inclusion proofs for code roots. | A single node cannot be proven without the full leaf list. | Merkle audit paths over the sorted leaves. |
 | G10 | Dynamic behavior outside the listed patterns, such as functions stored in dictionaries and called by key. | Not detected. | Runtime enforcement. |
 | G11 | Hashes depend on the `ast.dump` format of the interpreter. | A different Python version can give a different root. | Record the version with every root; test roots across versions; move to a version-independent serialization. |
@@ -646,13 +646,12 @@ python3.14 -I v0.1/proofs/check_model.py
 7. Implement the admission gates as code.
 8. Run the release-history test on larger packages with many contributors.
 9. Evaluate the component tier for pure-Python parts with `componentize-py`.
-10. Compositional results: let a result that concerns a node's own behavior (a review of its code, a fuzz run of its logic with callees treated by their declared scope) attach to the node's own hash plus the scope roots of what it calls, instead of the full Merkle hash. Such a result then survives changes in callees that keep their scope. Results about whole behavior keep using the Merkle hash.
-11. Take the diff tool to users: a GitHub Action that comments on pull requests changing `requirements.txt`, `uv.lock` or `poetry.lock`; a shared cache of reports keyed by artifact hash; and an MCP server for coding agents. Measure how often a report changes a decision and how often users mark findings as harmless.
-12. Continue proving the core on the front end, back end and checker split (section 3.8):
+10. Take the diff tool to users: a GitHub Action that comments on pull requests changing `requirements.txt`, `uv.lock` or `poetry.lock`; a shared cache of reports keyed by artifact hash; and an MCP server for coding agents. Measure how often a report changes a decision and how often users mark findings as harmless.
+11. Continue proving the core on the front end, back end and checker split (section 3.8):
     1. Roll-up soundness and `TOP` propagation, with the matching conditions added to the checker.
     2. Reuse soundness: a result accepted for a hash stays valid wherever that hash appears.
     3. The result acceptance rule (section 6.2).
-13. Define the proof result format and record each core proof in it.
+12. Define the proof result format and record each core proof in it.
 
 ## References
 
