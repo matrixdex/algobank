@@ -92,11 +92,21 @@ Rule: if there is doubt whether something changes behavior, it stays in the hash
 
 ### 3.3 Merkle hash and cycles
 
-For a node outside any cycle, `merkle = H(base + own)`, where `base` combines the node's own hash, the Merkle hashes of its callees, and the sorted pins of outside packages it uses.
+Nodes are grouped into components (section 3.8). A node's Merkle hash is `H(base + own)`, where `own` is the hash of its normalized code and `base` is the hash of its component:
+
+```
+base = H( "|".join(sorted own hashes of the component's members)
+        + "#" + "|".join(Merkle hashes of the component's external dependencies)
+        + "#" + "|".join(H(pin) for each sorted pin string) )
+```
+
+Every item joined by `|` is a 64-character hex digest, so the encoding splits back uniquely. Pin strings are hashed before joining because a version specifier may itself contain `|`.
+
+Proven property (section 10.5): if a node's Merkle hash is unchanged, every node it can reach has a counterpart with the same Merkle hash, the same own hash and the same pins. An unchanged hash therefore means unchanged code underneath, which is what makes reusing results safe.
 
 Every function also depends on its module's top-level code, which holds the module's constants, class attributes and imports, and itself depends on the top-level code of the package modules it imports. A change to a constant therefore changes the hash of every function in the module, including constants imported from other modules. A function that writes module state through `global` is a dependency of the module's top-level code, so every reader of that state depends on the writer. This over-invalidates within a module and never under-invalidates for these cases.
 
-Recursion and mutual recursion form cycles. The call graph is reduced to strongly connected components (Tarjan's algorithm). Each component is hashed as one unit, and each member then combines that value with its own hash.
+Recursion and mutual recursion form cycles, which is why the hash is computed per component: each component is hashed as one unit, and each member then combines that value with its own hash.
 
 ### 3.4 Code root
 
@@ -142,6 +152,18 @@ A garden part may depend only on other garden parts, pinned by digest. v0.1 reco
 ### 3.7 Hash function
 
 `H` is SHA-256, written as 64 hex characters. Every digest in a tree has the same length; `root()` raises an error otherwise, because splitting a concatenated input back into its halves relies on that length. Hashes come from Python's `ast.dump`, whose format can differ between interpreter versions, so the interpreter version is recorded with every root.
+
+### 3.8 Front end, back end and checker
+
+The analyzer has three parts:
+
+| Part | Input | Output | Trust |
+|---|---|---|---|
+| Front end | Source files | Per-node facts: own hash, dependency edges, pin strings, direct scope, flags | Trusted and tested; Python has no formal semantics to prove it against |
+| Back end (`backend`) | The facts | Components (Tarjan's algorithm), Merkle hashes, rolled-up scope and flags | Untrusted |
+| Checker (`check_backend`) | The facts and the back end's output | Accept, or an error | Checks exactly the conditions of the Merkle soundness proof |
+
+The checker verifies that own hashes are digests; that every node belongs to exactly the component it is assigned to; that every component's members are mutually reachable; that every dependency edge stays inside the component or is listed as an external dependency, and every listed external dependency is used; and that every Merkle hash satisfies the equation in section 3.3. The analyzer runs the checker on every analysis and stops if it fails, so the theorem covers every result the analyzer produces. This is the proven-checker approach: Tarjan's algorithm is not proven; its output is checked.
 
 ## 4. Scope
 
@@ -401,11 +423,12 @@ Example admission entry (digests shortened):
 | `v0.1/pkgmerkle.py` | The analyzer: code Merkle tree, call resolution, scope detection and roll-up, `TOP`, code root and scope root. Standard library only. |
 | `v0.1/synth_demo.py` | Test on a synthetic eight-file package with a dynamic plugin loader, a computed `getattr` dispatcher, and plugins that use files and the network. |
 | `v0.1/dexweb_v2.py` | Release-history test over every published wheel of the `dexweb` package. |
-| `v0.1/test_pkgmerkle.py` | Regression tests: full digests, prefixes, and module-level dependencies (constants, imported constants, class attributes, `global` writers). |
+| `v0.1/test_pkgmerkle.py` | Regression tests: full digests, prefixes, module-level dependencies (constants, imported constants, class attributes, `global` writers), and one test per checker condition. |
 | `v0.1/proofs/CodeRoot.v` | Coq proof of the code root computation (section 10.4). |
+| `v0.1/proofs/MerkleSound.v` | Coq proof of Merkle soundness (section 10.5). |
 | `v0.1/proofs/check_model.py`, `Extract.v`, `driver.ml` | Check that the proven model computes the same root as `pkgmerkle.py`. |
 
-Built: sections 3.1–3.5, 3.6 (recording pins), 3.7, 4.2–4.4, and the proof of section 3.4. Everything else is specified.
+Built: sections 3.1–3.5, 3.6 (recording pins), 3.7, 3.8, 4.2–4.4, and the proofs of sections 3.3 and 3.4. Everything else is specified.
 
 ### 10.2 First garden part
 
@@ -413,11 +436,11 @@ Built: sections 3.1–3.5, 3.6 (recording pins), 3.7, 4.2–4.4, and the proof o
 
 | Item | Value |
 |---|---|
-| Code root | `7384aea81327781de39670cfd00d6f2a98df4d225ae16347fca00578ca3c3560` |
+| Code root | `b2be176b813b50b5d86c26add24230b8ec828880551812b64a46ad5ecaf131ac` |
 | Scope | none |
 | Scope root | `140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe` |
-| Nodes | 25 |
-| File SHA-256 | `36b5cf61663d3b6af168c75268cdd7b12b3dfa817ad6d783db672b4f96915fd7` |
+| Nodes | 29 |
+| File SHA-256 | `30af56c6745b8683037894c02588184f3bdba7d1e398fe6435a6c91b8bd6fa7a` |
 | Python | 3.14 |
 
 To recompute:
@@ -457,7 +480,7 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))"
 
 The dexweb figures come from one small package with one author and should not be generalized.
 
-**Self-analysis:** `pkgmerkle.py` analyzed by itself has 25 nodes, no scope and no `TOP`, and gives identical hashes on repeated runs. A one-line change to `H()` changes `H` and the five nodes that call it directly or indirectly; the other 19 nodes keep their hashes.
+**Self-analysis:** `pkgmerkle.py` analyzed by itself has 29 nodes, no scope and no `TOP`, and gives identical hashes on repeated runs. A one-line change to `H()` changes `H` and the eight nodes that call it directly or indirectly; the other 20 nodes keep their hashes.
 
 ### 10.4 Proof of the code root
 
@@ -481,7 +504,33 @@ A package is well formed when it has no repeated pair and every Merkle hash is a
 
 **Model check.** `check_model.py` closes the second gap by testing. It extracts the proven `code_root` to OCaml and compares it with `Package.root()` on 5,000 random packages of 0 to 80 nodes, using the same stand-in hash on both sides. All 5,000 roots match. Two deliberate changes to the Python code (pairing an odd last leaf with nothing, and not sorting leaves) each produce mismatches on more than half the cases, so the check detects divergence.
 
-### 10.5 Running
+### 10.5 Proof of Merkle soundness
+
+`v0.1/proofs/MerkleSound.v` models the back end's output as a graph with components and proves, in Coq 8.18:
+
+| Theorem | Statement |
+|---|---|
+| `merkle_sound` | If node `n1` in one analysis and node `n2` in another have the same Merkle hash, every node reachable from `n1` has a counterpart reachable from `n2` with the same Merkle hash. |
+| `merkle_sound_content` | The counterpart also has the same own hash and its component has the same pins. |
+| `merkle_sound_back` | The same holds in the other direction. |
+
+The theorems hold for any output that meets the checker's conditions (section 3.8), stated in the proof as the record `WF`. Each field of `WF` corresponds to one check in `check_backend`.
+
+**Assumptions.** `H` returns 64 lowercase hex characters and is injective, and the sort returns a permutation of its input. `Print Assumptions merkle_sound_content` reports no axioms beyond these hypotheses.
+
+**What the proof required.** The original encoding joined raw pin strings with `|`. A version specifier containing `|` would make two different pin lists encode the same way, so the proof could not go through. Pins are now hashed before joining.
+
+**Validation.**
+
+| Check | Result |
+|---|---|
+| One test per checker condition, each confirming the specific failure | All conditions reject a deliberately broken output; for the two structural conditions, Merkle hashes are recomputed first so only the condition under test can fail |
+| The theorem on real data: every pair of nodes with the same Merkle hash across consecutive dexweb releases | 24 updates, 527 pairs, every reachable node matched |
+| The checker on every analysis in the test suite, the synthetic package, the self-analysis and all 25 dexweb releases | Accepted |
+
+**Gap between proof and code.** The proof covers the conditions; `check_backend` is Python, and its correspondence to `WF` is established by the per-condition tests, not by proof. The front end, including normalization and own hashes, is outside the proof.
+
+### 10.6 Running
 
 Requirements: Python 3.14, standard library only. The proof additionally needs Coq 8.18 and, for the model check, OCaml with `ocamlfind`.
 
@@ -510,8 +559,8 @@ python3.14 -I v0.1/dexweb_v2.py <scratch>
 The wheels are parsed and never run.
 
 ```
-# check the proof
-cd v0.1/proofs && coqc -Q . Algobank CodeRoot.v
+# check the proofs
+cd v0.1/proofs && coqc -Q . Algobank CodeRoot.v && coqc -Q . Algobank MerkleSound.v
 
 # compare the proven model with pkgmerkle.py (builds in a temporary directory)
 python3.14 -I v0.1/proofs/check_model.py
@@ -545,13 +594,10 @@ python3.14 -I v0.1/proofs/check_model.py
 7. Implement the admission gates as code.
 8. Run the release-history test on larger packages with many contributors.
 9. Evaluate the component tier for pure-Python parts with `componentize-py`.
-10. Prove the core, in this order, starting from a split of the analyzer into an untrusted front end (parsing, call graph, direct facts per node) and a verified back end (hashing, components, roll-up, `TOP`, root):
-    1. Merkle soundness: an unchanged Merkle hash means the node's code and everything it reaches are unchanged.
-    2. Roll-up soundness and `TOP` propagation.
-    3. Reuse soundness: a result accepted for a hash stays valid wherever that hash appears.
-    4. The result acceptance rule (section 6.2).
-
-    Where proving an algorithm costs too much, a proven checker verifies its output instead; for example, a checker for the strongly connected components that Tarjan's algorithm returns.
+10. Continue proving the core on the front end, back end and checker split (section 3.8):
+    1. Roll-up soundness and `TOP` propagation, with the matching conditions added to the checker.
+    2. Reuse soundness: a result accepted for a hash stays valid wherever that hash appears.
+    3. The result acceptance rule (section 6.2).
 11. Define the proof result format and record each core proof in it.
 
 ## References

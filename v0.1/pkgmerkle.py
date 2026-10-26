@@ -253,22 +253,15 @@ class Package:
             # module state written through `global` is read by every function in the module
             if any(isinstance(n, ast.Global) for n in ast.walk(fn)):
                 raw[f"{mod}:<module>"]["edges"].add(nid)
-        for r in raw.values(): r["edges"] = {x for x in r["edges"] if x in raw}
-        graph = {k: sorted(v["edges"]) for k, v in raw.items()}
-        merk, caps, flags = {}, {}, {}
-        for comp in self._sccs(graph):
-            cs = set(comp)
-            ext = sorted({d for q in comp for d in graph[q] if d not in cs})
-            pins = sorted({f"{r}={self.pins.get(r.lower(), 'stdlib/unpinned')}" for q in comp for r in raw[q]["ext"]})
-            base = H("|".join(sorted(raw[q]["own"] for q in comp)) + "#" + "|".join(merk[d] for d in ext) + "#" + "|".join(pins))
-            ccaps = set().union(*[raw[q]["caps"] for q in comp], *[caps[d] for d in ext])
-            cflags = set().union(*[raw[q]["flags"] for q in comp], *[flags[d] for d in ext])
-            if cflags & {"dyn-import", "dyn-attr", "dyn-exec", "dyn-patch"}: ccaps = ccaps | {TOP}
-            for q in comp:
-                merk[q], caps[q], flags[q] = H(base + raw[q]["own"]), ccaps, cflags
+        for r in raw.values():
+            r["edges"] = {x for x in r["edges"] if x in raw}
+            r["pins"] = {f"{x}={self.pins.get(x.lower(), 'stdlib/unpinned')}" for x in r["ext"]}
+        self.facts = raw
+        out, self.comps = backend(raw)
+        check_backend(raw, out, self.comps)
         for k, r in raw.items():
-            self.nodes[k] = dict(own=r["own"], merkle=merk[k], size=r["size"], caps=caps[k], flags=flags[k],
-                                 direct_flags=r["flags"], direct_caps=r["caps"], stats=r["stats"])
+            self.nodes[k] = dict(own=r["own"], merkle=out[k]["merkle"], size=r["size"], caps=out[k]["caps"],
+                                 flags=out[k]["flags"], direct_flags=r["flags"], direct_caps=r["caps"], stats=r["stats"])
 
     # ---- package root: one package is one Merkle tree ----------------------
     def leaves(self):
@@ -293,21 +286,96 @@ class Package:
     def scope_root(self):
         return H(",".join(self.scope()) or "none")
 
-    @staticmethod
-    def _sccs(graph):
-        idx, low, st, on, out, i = {}, {}, [], set(), [], [0]
-        sys.setrecursionlimit(20000)
-        def go(v):
-            idx[v] = low[v] = i[0]; i[0] += 1; st.append(v); on.add(v)
-            for w in graph[v]:
-                if w not in idx: go(w); low[v] = min(low[v], low[w])
-                elif w in on: low[v] = min(low[v], idx[w])
-            if low[v] == idx[v]:
-                comp = []
-                while True:
-                    w = st.pop(); on.discard(w); comp.append(w)
-                    if w == v: break
-                out.append(comp)
-        for v in graph:
-            if v not in idx: go(v)
-        return out
+
+# ---- back end: everything after parsing --------------------------------------
+# Input: per-node facts from the front end. For each node id:
+#   own   - hash of the node's normalized code
+#   edges - node ids it depends on (calls, its module's top-level code, ...)
+#   pins  - "name=pin" strings for the outside packages it uses
+#   caps, flags - its direct scopes and dynamic-code flags
+# The proof in proofs/MerkleSound.v covers any output that check_backend accepts.
+
+def sccs(graph):
+    """Tarjan's algorithm. Returns components with every component listed after the components it depends on."""
+    idx, low, st, on, out, i = {}, {}, [], set(), [], [0]
+    sys.setrecursionlimit(20000)
+    def go(v):
+        idx[v] = low[v] = i[0]; i[0] += 1; st.append(v); on.add(v)
+        for w in graph[v]:
+            if w not in idx: go(w); low[v] = min(low[v], low[w])
+            elif w in on: low[v] = min(low[v], idx[w])
+        if low[v] == idx[v]:
+            comp = []
+            while True:
+                w = st.pop(); on.discard(w); comp.append(w)
+                if w == v: break
+            out.append(comp)
+    for v in graph:
+        if v not in idx: go(v)
+    return out
+
+
+def comp_base(comp, own, merk):
+    """The component hash: member own hashes (sorted), external dependencies' Merkle hashes, hashed pins."""
+    return H("|".join(sorted(own[q] for q in comp["members"])) + "#"
+             + "|".join(merk[d] for d in comp["ext"]) + "#"
+             + "|".join(H(p) for p in comp["pins"]))
+
+def backend(facts):
+    graph = {k: sorted(v["edges"]) for k, v in facts.items()}
+    own = {k: v["own"] for k, v in facts.items()}
+    out, comps, merk = {}, [], {}
+    for members in sccs(graph):
+        cs = set(members)
+        comp = dict(members=sorted(members),
+                    ext=sorted({d for q in members for d in graph[q] if d not in cs}),
+                    pins=sorted(set().union(*[facts[q]["pins"] for q in members])))
+        base = comp_base(comp, own, merk)
+        ccaps = set().union(*[facts[q]["caps"] for q in members], *[out[d]["caps"] for d in comp["ext"]])
+        cflags = set().union(*[facts[q]["flags"] for q in members], *[out[d]["flags"] for d in comp["ext"]])
+        if cflags & {"dyn-import", "dyn-attr", "dyn-exec", "dyn-patch"}: ccaps = ccaps | {TOP}
+        for q in members:
+            merk[q] = H(base + own[q])
+            out[q] = dict(merkle=merk[q], caps=ccaps, flags=cflags, comp=len(comps))
+        comps.append(comp)
+    return out, comps
+
+def _reaches_all(start, targets, graph):
+    """True if every node in targets is reachable from start through nodes in targets."""
+    seen, todo = {start}, [start]
+    while todo:
+        for w in graph[todo.pop()]:
+            if w in targets and w not in seen: seen.add(w); todo.append(w)
+    return targets <= seen
+
+def check_backend(facts, out, comps):
+    """Checks the back end's output against the conditions of the Merkle soundness proof.
+    Raises ValueError if any condition fails; the theorem then does not apply."""
+    def fail(msg): raise ValueError("back end check failed: " + msg)
+    graph = {k: v["edges"] for k, v in facts.items()}
+    rgraph = {k: set() for k in facts}
+    for k, es in graph.items():
+        for e in es: rgraph[e].add(k)
+    merk = {k: o["merkle"] for k, o in out.items()}
+    own = {k: v["own"] for k, v in facts.items()}
+    hexd = set("0123456789abcdef")
+    for k in facts:                                           # own hashes are digests
+        if len(own[k]) != DIGEST_LEN or not set(own[k]) <= hexd: fail(f"own hash of {k}")
+    sets = [(set(c["members"]), set(c["ext"])) for c in comps]
+    for i, c in enumerate(comps):
+        members = sets[i][0]
+        for m in members:                                     # Mem, Comp
+            if out[m]["comp"] != i: fail(f"{m} is not assigned to component {i}")
+        for x in c["ext"]:                                    # X: every external entry is used by a member
+            if not any(x in graph[m] for m in members): fail(f"external {x} of component {i} is unused")
+        first = c["members"][0]                               # R: members are mutually reachable
+        if not _reaches_all(first, members, graph) or not _reaches_all(first, members, rgraph):
+            fail(f"component {i} is not strongly connected")
+    for k in facts:
+        c = comps[out[k]["comp"]]
+        members, ext = sets[out[k]["comp"]]
+        if k not in members: fail(f"{k} is missing from its component")
+        for x in graph[k]:                                    # E: every edge stays inside or is listed as external
+            if x not in members and x not in ext: fail(f"edge {k} -> {x} is not covered")
+        base = comp_base(c, own, merk)                        # M: the Merkle equation
+        if merk[k] != H(base + own[k]): fail(f"Merkle hash of {k}")

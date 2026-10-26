@@ -48,6 +48,91 @@ def test_prefixes():
     leaf = H("\x00" + "m:f=" + p.nodes["m:f"]["merkle"])
     assert leaf in p.leaves()
 
+# ---- check_backend must reject every output that breaks a condition of the Merkle soundness proof
+
+import copy
+from pkgmerkle import backend, check_backend, comp_base
+
+# Two modules, a mutual recursion (a component with two members), and a cross-module call.
+CYCLE = {"pkg/__init__.py": "",
+         "pkg/a.py": "from .b import g\n\ndef f(n):\n    return g(n - 1) if n else 0\n",
+         "pkg/b.py": "def g(n):\n    from .a import f\n    return f(n) + 1\n\ndef h():\n    return g(3)\n"}
+
+def rejected(facts, out, comps):
+    """The checker's failure message, or None if it accepts."""
+    try:
+        check_backend(facts, out, comps)
+    except ValueError as e:
+        return str(e)
+    return None
+
+def rehash(facts, out, comps):
+    """Recompute every Merkle hash from the (possibly altered) components, so the Merkle
+    equation holds and only the structural condition under test can fail."""
+    own = {k: v["own"] for k, v in facts.items()}
+    merk = {}
+    for c in comps:
+        base = comp_base(c, own, merk)
+        for q in c["members"]:
+            merk[q] = H(base + own[q])
+    for k in out:
+        out[k]["merkle"] = merk[k]
+
+def test_checker_accepts_real_output():
+    p = Package(CYCLE)
+    assert any(len(c["members"]) > 1 for c in p.comps)
+    out, comps = backend(p.facts)
+    assert not rejected(p.facts, out, comps)
+
+def mutated(change, rehash_after=False):
+    p = Package(CYCLE)
+    out, comps = backend(p.facts)
+    out, comps = copy.deepcopy(out), copy.deepcopy(comps)
+    change(p.facts, out, comps)
+    if rehash_after:
+        rehash(p.facts, out, comps)
+    return rejected(p.facts, out, comps) or ""
+
+def test_checker_rejects_wrong_merkle():                      # wf_merk
+    def change(facts, out, comps):
+        k = next(iter(out)); out[k]["merkle"] = H("forged")
+    assert "Merkle hash of" in mutated(change)
+
+def test_checker_rejects_wrong_component():                   # wf_mem, wf_comp
+    def change(facts, out, comps):
+        k = next(iter(out)); out[k]["comp"] = (out[k]["comp"] + 1) % len(comps)
+    assert "is not assigned to component" in mutated(change)
+
+def test_checker_rejects_missing_external():                  # wf_edge
+    def change(facts, out, comps):
+        c = next(c for c in comps if c["ext"]); c["ext"] = c["ext"][1:]
+    assert "is not covered" in mutated(change, rehash_after=True)
+
+def test_checker_rejects_unused_external():                   # wf_ext
+    def change(facts, out, comps):
+        i = next(i for i, c in enumerate(comps) if i > 0)   # an earlier component exists to point at
+        earlier = comps[0]["members"][0]
+        if earlier not in comps[i]["ext"]:
+            comps[i]["ext"] = sorted(comps[i]["ext"] + [earlier])
+        else:
+            raise AssertionError("pick another component")
+    assert "is unused" in mutated(change, rehash_after=True)
+
+def test_checker_rejects_own_not_digest():                    # wf_own
+    def change(facts, out, comps):
+        k = next(iter(facts)); facts[k]["own"] = "not a digest"
+    assert "own hash of" in mutated(change)
+
+def test_checker_rejects_unconnected_component():             # wf_scc
+    """Two unrelated nodes in one component, with Merkle hashes computed consistently,
+    so only the strong-connectivity condition can catch it."""
+    facts = {n: dict(own=H(n), edges=set(), pins=set(), caps=set(), flags=set()) for n in ("x", "y")}
+    comps = [dict(members=["x", "y"], ext=[], pins=[])]
+    own = {n: facts[n]["own"] for n in facts}
+    base = comp_base(comps[0], own, {})
+    out = {n: dict(merkle=H(base + own[n]), caps=set(), flags=set(), comp=0) for n in facts}
+    assert "not strongly connected" in rejected(facts, out, comps)
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
