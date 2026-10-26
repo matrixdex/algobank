@@ -43,6 +43,7 @@ All other checks (tests, fuzzers, linters, reviews) are external tools whose sig
 5. Every enforcement step fails closed: if a restriction cannot be applied and verified, the part does not run.
 6. Existing standards and tools are reused wherever they fit.
 7. Simplicity over saved work. Add complexity only when core functionality is impossible without it. When the alternative is only more computation, spend the CPU cycles and keep the design simple. Example: reviewing each function independently would avoid rechecking the whole package after a change, but rechecking achieves the same result, so independent function review is not added.
+8. Findings are signal. A finding is not suppressed or downgraded because it is common, inconvenient or "probably harmless". An unexplained power is reported, and code that Algobank cannot see into is rated by what it could do (`TOP`). For codegens, findings are feedback that leads to better code: when Algobank analyzed its own release, it flagged a parse-only `compile()` call as `TOP`, and replacing it with `ast.parse` made the tool's own scope exact.
 
 ### 1.4 Layers above the core
 
@@ -53,6 +54,8 @@ Banking and insurance (vouches, deposits, penalties, interest, payouts) sit on t
 | Term | Meaning |
 |---|---|
 | **Package** | A set of source files analyzed together. One package has one code Merkle tree. |
+| **Algobanking** | Analyzing a package with Algobank: computing its code Merkle tree and scope, and checking the result. An algobanked package has been analyzed this way. |
+| **Codegen** | An AI coding agent. |
 | **Part** | A package admitted to the garden. The unit that is confined and run. |
 | **Node** | A function or method (`module:qualname`), a module's top-level code (`module:<module>`), or a module value (`module:=name`). |
 | **Own hash** | The hash of a node's normalized syntax tree alone. |
@@ -424,11 +427,12 @@ Example admission entry (digests shortened):
 
 | File | Purpose |
 |---|---|
-| `v0.1/pkgmerkle.py` | The analyzer: code Merkle tree, call resolution, scope detection and roll-up, `TOP`, code root and scope root. Standard library only. |
+| `algobank/pkgmerkle.py` | The analyzer: code Merkle tree, call resolution, scope detection and roll-up, `TOP`, code root and scope root. Standard library only. |
 | `v0.1/synth_demo.py` | Test on a synthetic eight-file package with a dynamic plugin loader, a computed `getattr` dispatcher, and plugins that use files and the network. |
 | `v0.1/dexweb_v2.py` | Release-history test over every published wheel of the `dexweb` package. |
 | `v0.1/test_pkgmerkle.py` | Regression tests: full digests, prefixes, module-level dependencies (constants, imported constants, class attributes, `global` writers, references, registries, conditional and star imports), precision (unrelated changes do not spread), method calls (subclass overrides, `super()`, call results, and receivers that must never be narrowed), and one test per checker condition. |
-| `v0.1/algobank_diff.py` | Diff tool: compares two versions of a package and reports new scope, dynamic code, hooks, binaries and dependencies (section 10.6). |
+| `pyproject.toml` | Package metadata for PyPI. The build backend is `flit_core`, which has no dependencies. The wheel contains only `algobank/`. |
+| `algobank/diff.py` | Diff tool and `algobank` command: compares two versions of a package and reports new scope, dynamic code, hooks, binaries and dependencies (section 10.6). |
 | `v0.1/test_diff.py` | Tests for the diff tool on synthetic wheels that reproduce real attack patterns. |
 | `v0.1/proofs/CodeRoot.v` | Coq proof of the code root computation (section 10.4). |
 | `v0.1/proofs/MerkleSound.v` | Coq proof of Merkle soundness (section 10.5). |
@@ -452,10 +456,10 @@ Built: sections 3.1–3.5, 3.6 (recording pins), 3.7, 3.8, 4.2–4.4, and the pr
 To recompute:
 
 ```
-cd v0.1
+cd algobank
 python3.14 -I -B -c "
-import sys; sys.path.insert(0, '.')
-from pkgmerkle import Package
+import sys; sys.path.insert(0, '..')
+from algobank.pkgmerkle import Package
 with open('pkgmerkle.py') as fh:
     p = Package({'pkgmerkle.py': fh.read()})
 print(p.root(), p.scope(), p.scope_root(), len(p.nodes))"
@@ -538,11 +542,11 @@ The theorems hold for any output that meets the checker's conditions (section 3.
 
 ### 10.6 Diff tool
 
-`algobank_diff.py` is the first product built on the core. For a Python package it answers two questions a developer or coding agent faces when adding or updating a dependency: what changed, and what can the package do now.
+The diff tool, run as the `algobank` command, is the first product built on the core. For a Python package it answers two questions a developer or coding agent faces when adding or updating a dependency: what changed, and what can the package do now.
 
 ```
-python3.14 -I v0.1/algobank_diff.py diff NAME OLD NEW [--json]
-python3.14 -I v0.1/algobank_diff.py scope NAME VERSION [--json]
+algobank diff NAME OLD NEW [--json]
+algobank scope NAME VERSION [--json]
 ```
 
 `OLD`, `NEW` and `VERSION` are PyPI versions or paths to local wheel or sdist files. The tool downloads a wheel (preferring a pure-Python wheel, otherwise a Linux x86-64 wheel, otherwise the sdist), checks it against PyPI's SHA-256, and reads it in memory. Nothing from the package is installed, imported or run.
@@ -556,7 +560,8 @@ python3.14 -I v0.1/algobank_diff.py scope NAME VERSION [--json]
 | Such a scope newly reachable from existing code, named with where it enters | high |
 | New `eval`, `exec`, deserialization, or run-time changes to another module | high |
 | New native binary (not analyzed) | high |
-| New `file` scope, other new dynamic code (computed imports and attributes, `__getattr__`, `import *`), changed native binary, new dependency, new entry point or installed script | medium |
+| New dependency, including test-only and optional ones: its code is not analyzed here, so its scope is unknown (`TOP`) | high |
+| New `file` scope, other new dynamic code (computed imports and attributes, `__getattr__`, `import *`), changed native binary, new entry point or installed script | medium |
 | Changed dependency range, new or changed data files | low |
 
 Exit status is 1 when any finding is high, 0 otherwise, and 2 on error, so the tool can gate a CI job. `--json` gives the same report for programs and agents. The report also states what it could not see: unparsed files, native binaries, and analysis from an sdist when no wheel exists.
@@ -567,6 +572,8 @@ Exit status is 1 when any finding is high, 0 otherwise, and 2 on error, so the t
 |---|---|
 | Synthetic wheels reproducing attack patterns: a `.pth` file with a module that reads the environment and uses the network (LiteLLM 1.107.0); an existing formatting function that starts using the network (chalk/debug); new `exec`; a new native binary; a new dependency | Each produces the expected high or medium finding (`test_diff.py`) |
 | A clean update of the same synthetic package, and a dependency range that changes only in formatting | No findings |
+| A new test-only dependency (`setuptools ; extra == 'testing'`) | High: optional dependencies bring unanalyzed code too |
+| Algobank's own wheel (`algobank scope algobank dist/...whl`) | `file` and `network`, both only in `fetch`, which downloads and caches wheels |
 | Normal updates of popular packages: requests 2.31.0→2.32.3, urllib3 2.2.1→2.2.2, idna 3.6→3.7, rich 13.7.0→13.7.1, packaging 24.0→24.1 | Four have no medium or high findings. requests has one real change flagged high: a new computed import, run at import time, that selects a character-detection library. |
 | dexweb 4.2.2→4.2.3 | `process` reported as new, entering at `Dexweb.run_git` |
 
@@ -603,9 +610,13 @@ python3.14 -I v0.1/dexweb_v2.py <scratch>
 The wheels are parsed and never run.
 
 ```
-# diff tool
+# install from the repository and run the diff tool
+pip install .
+algobank diff requests 2.31.0 2.32.3
+
+# diff tool tests
 python3.14 -I v0.1/test_diff.py
-python3.14 -I v0.1/algobank_diff.py diff requests 2.31.0 2.32.3
+python3.14 -m algobank diff requests 2.31.0 2.32.3
 
 # check the proofs
 cd v0.1/proofs && coqc -Q . Algobank CodeRoot.v && coqc -Q . Algobank MerkleSound.v
@@ -613,6 +624,10 @@ cd v0.1/proofs && coqc -Q . Algobank CodeRoot.v && coqc -Q . Algobank MerkleSoun
 # compare the proven model with pkgmerkle.py (builds in a temporary directory)
 python3.14 -I v0.1/proofs/check_model.py
 ```
+
+### 10.8 Release
+
+`uv build` (or `python -m build`) produces `dist/algobank-0.1.0-py3-none-any.whl` and `dist/algobank-0.1.0.tar.gz`. Both contain only the `algobank` package, `LICENSE`, `README.md` and metadata; tests, proofs, documents and `CLAUDE.md` are excluded. `twine check dist/*` passes. Upload is manual with the maintainer's own PyPI credentials; the repository contains no credentials and the code reads no environment variables.
 
 ## 11. Known limitations
 
@@ -630,6 +645,7 @@ python3.14 -I v0.1/proofs/check_model.py
 | G11 | Hashes depend on the `ast.dump` format of the interpreter. | A different Python version can give a different root. | Record the version with every root; test roots across versions; move to a version-independent serialization. |
 | G12 | Introspection through dunder attributes or frames can reach effectful functions without importing them. | Such code is reported with no scope. Soundness gap. | Treat introspection as `TOP`; allowlist for compute parts (section 4.5); enforce at the boundary. |
 | G13 | No `clock` or `entropy` detection. | Code that is not deterministic can appear pure. | Add both scopes to the detection table. |
+| G15 | Algobanking checks code before it runs. Code can be replaced in memory at run time: another package can assign `clean_lib.fn = evil`, put a different module in `sys.modules`, or add an import hook, so callers of an algobanked library run code that was never algobanked. | A clean result does not prove what runs. Within an algobanked package such patching is flagged `TOP`; from a package outside the analysis it is invisible. | Algobank every package in the dependency closure, and verify at run time that loaded functions still match their algobanked hashes (see section 5 for enforcement). |
 
 ## 12. Roadmap (v0.2)
 
@@ -642,7 +658,7 @@ python3.14 -I v0.1/proofs/check_model.py
 7. Implement the admission gates as code.
 8. Run the release-history test on larger packages with many contributors.
 9. Evaluate the component tier for pure-Python parts with `componentize-py`.
-10. Take the diff tool to users: a GitHub Action that comments on pull requests changing `requirements.txt`, `uv.lock` or `poetry.lock`; a shared cache of reports keyed by artifact hash; and an MCP server for coding agents. Measure how often a report changes a decision and how often users mark findings as harmless.
+10. Take the diff tool to users: a GitHub Action that comments on pull requests changing `requirements.txt`, `uv.lock` or `poetry.lock`; a shared cache of reports keyed by artifact hash; and an MCP server for coding agents. Measure how often a finding leads to a change in a dependency or in the code.
 11. Continue proving the core on the front end, back end and checker split (section 3.8):
     1. Roll-up soundness and `TOP` propagation, with the matching conditions added to the checker.
     2. Reuse soundness: a result accepted for a hash stays valid wherever that hash appears.

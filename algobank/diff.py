@@ -1,8 +1,8 @@
 """algobank diff: what changed in a Python package between two versions, and what it can do now.
 
 Usage:
-  python3.14 algobank_diff.py diff NAME OLD NEW [--json]
-  python3.14 algobank_diff.py scope NAME VERSION [--json]
+  algobank diff NAME OLD NEW [--json]
+  algobank scope NAME VERSION [--json]
 
 OLD, NEW and VERSION are PyPI versions or paths to local wheel or sdist files.
 
@@ -11,10 +11,9 @@ Nothing from the package is installed, imported or run.
 
 Exit status: 0 no high-severity findings, 1 high-severity findings, 2 error.
 """
-import argparse, hashlib, io, json, os, re, sys, tarfile, urllib.request, zipfile
+import argparse, ast, hashlib, io, json, os, re, sys, tarfile, urllib.request, zipfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pkgmerkle import Package, TOP
+from .pkgmerkle import Package, TOP
 
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "algobank")
 MAX_FILE = 50 * 2**20          # skip larger members
@@ -143,7 +142,7 @@ def analyze(art):
         if path.endswith(".py") and ".dist-info/" not in path:
             try:
                 src = data.decode("utf-8")
-                compile(src, path, "exec", flags=0x400, dont_inherit=True)   # ast.PyCF_ONLY_AST: parse only
+                ast.parse(src, path)                                       # parse only, never run
                 sources[path] = src
             except (UnicodeDecodeError, SyntaxError, ValueError):
                 unparsed.append(path)
@@ -252,7 +251,8 @@ def diff_report(a, b):
     if nb: f.append(finding("high", "native", "new native binaries (not analyzed)", nb))
     if cb: f.append(finding("medium", "native", "changed native binaries (not analyzed)", cb))
     for d in sorted(set(b["deps"]) - set(a["deps"])):
-        f.append(finding("medium", "dependency", f"new dependency {d} ({b['deps'][d]})"))
+        f.append(finding("high", "dependency", f"new dependency {d} ({b['deps'][d]}): not analyzed here, "
+                                               "so its scope is unknown (TOP), including test-only and optional ones"))
     for d in sorted(set(a["deps"]) - set(b["deps"])):
         f.append(finding("low", "dependency", f"removed dependency {d}"))
     for d in sorted(set(a["deps"]) & set(b["deps"])):
@@ -296,13 +296,14 @@ def print_scope(name, r):
     print(f"  scope: {', '.join(r['scope']) or 'none'}")
     for m, s in r["modules"].items():
         if s: print(f"    {m}: {', '.join(s)}")
-    if r["dependencies"]: print(f"  dependencies: {', '.join(sorted(r['dependencies']))}")
+    if r["dependencies"]:
+        print(f"  dependencies (not analyzed here, scope unknown): {', '.join(sorted(r['dependencies']))}")
     if r["findings"]:
         print("findings:"); show_findings(r["findings"])
     for c in r["coverage"]: print(f"  note: {c}")
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="algobank_diff", description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(prog="algobank", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("diff"); d.add_argument("name"); d.add_argument("old"); d.add_argument("new")
     s = sub.add_parser("scope"); s.add_argument("name"); s.add_argument("version")

@@ -10,8 +10,8 @@ Needs coqc (Coq 8.18) and ocamlfind/ocamlopt.
 import hashlib, os, random, shutil, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
-import pkgmerkle
+sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
+from algobank import pkgmerkle
 
 def md5_64(s):
     if isinstance(s, str): s = s.encode()

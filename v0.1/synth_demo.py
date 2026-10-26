@@ -1,7 +1,7 @@
 import os, sys, shutil, tempfile
 sys.dont_write_bytecode = True
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pkgmerkle import Package, TOP
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from algobank.pkgmerkle import Package, TOP
 
 ROOT = sys.argv[1]
 V = {

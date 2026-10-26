@@ -1,11 +1,11 @@
-"""Tests for algobank_diff.py on synthetic wheels that reproduce real attack patterns.
+"""Tests for algobank/diff.py on synthetic wheels that reproduce real attack patterns.
 Run: python3.14 -I v0.1/test_diff.py
 
 The wheels are built in a temporary directory and only parsed; nothing is installed or run.
 """
 import os, sys, tempfile, zipfile
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import algobank_diff as ad
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from algobank import diff as ad
 
 BASE = {
     "demo/__init__.py": "from .util import fmt\n",
@@ -67,9 +67,17 @@ def test_new_native_binary():
     assert any(x["kind"] == "native" for x in high(r))
 
 def test_new_dependency():
+    """axios 1.14.1 added one dependency, plain-crypto-js, which carried the malware."""
     meta = META.format(v="1.1") + "Requires-Dist: plain-crypto-js\n"
     r = run_diff(BASE, BASE, meta)
-    assert any("new dependency plain_crypto_js" in x["text"] for x in r["findings"])
+    assert any("new dependency plain_crypto_js" in x["text"] and "TOP" in x["text"] for x in high(r))
+
+def test_new_optional_dependency_is_high():
+    """Test-only and optional dependencies bring unanalyzed code too: setuptools in a test extra
+    reaches the environment and files if anything uses it in production."""
+    meta = META.format(v="1.1") + "Requires-Dist: setuptools ; extra == 'testing'\n"
+    r = run_diff(BASE, BASE, meta)
+    assert any("new dependency setuptools" in x["text"] for x in high(r))
 
 def test_dependency_formatting_is_not_a_change():
     meta = "Metadata-Version: 2.1\nName: demo\nVersion: 1.1\nRequires-Dist: idna >=2\n"

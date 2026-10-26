@@ -1,7 +1,7 @@
 """Regression tests for pkgmerkle.py. Run: python3.14 -I v0.1/test_pkgmerkle.py"""
 import os, sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pkgmerkle import Package, DIGEST_LEN, H
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from algobank.pkgmerkle import Package, DIGEST_LEN, H
 
 def changed(a, b):
     return sorted(k for k in a.nodes if k in b.nodes and a.nodes[k]["merkle"] != b.nodes[k]["merkle"])
@@ -132,7 +132,7 @@ def test_prefixes():
 # ---- check_backend must reject every output that breaks a condition of the Merkle soundness proof
 
 import copy
-from pkgmerkle import backend, check_backend, comp_base
+from algobank.pkgmerkle import backend, check_backend, comp_base
 
 # Two modules, a mutual recursion (a component with two members), and a cross-module call.
 CYCLE = {"pkg/__init__.py": "",

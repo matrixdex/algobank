@@ -1,6 +1,6 @@
 import sys, os, zipfile, glob, re, statistics as S
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pkgmerkle import Package, TOP
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from algobank.pkgmerkle import Package, TOP
 SP = sys.argv[1]
 rels = []
 with open(f"{SP}/dexweb/urls.tsv") as fh:
