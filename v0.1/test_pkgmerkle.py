@@ -42,6 +42,43 @@ def test_unrelated_body_edit():
     b = Package({"m.py": "def f():\n    return 1\n\ndef g():\n    return 3\n"})
     assert changed(a, b) == ["m:g"]
 
+def test_unrelated_constant_does_not_spread():
+    """G14: a function depends only on the module-level names it reads."""
+    a = Package({"m.py": "A = 1\nB = 2\n\ndef f():\n    return A\n"})
+    b = Package({"m.py": "A = 1\nB = 3\n\ndef f():\n    return A\n"})
+    assert "m:f" not in changed(a, b)
+
+def test_unrelated_module_does_not_spread():
+    """G14: changing one module's top-level code does not change functions in modules that import it
+    but do not read the changed name."""
+    cfg = "LIMIT = 10\nOTHER = {}\n"
+    use = "from . import config\n\ndef f(x):\n    return x < config.LIMIT\n"
+    a = Package({"pkg/__init__.py": "", "pkg/config.py": cfg, "pkg/use.py": use})
+    b = Package({"pkg/__init__.py": "", "pkg/config.py": cfg.replace("{}", "{1: 2}"), "pkg/use.py": use})
+    c = Package({"pkg/__init__.py": "", "pkg/config.py": cfg.replace("10", "20"), "pkg/use.py": use})
+    assert "pkg.use:f" not in changed(a, b)
+    assert "pkg.use:f" in changed(a, c)
+
+def test_function_reference():
+    """A function passed as a value, not called, is still a dependency."""
+    src = "def helper(x):\n    return x + {n}\n\ndef g(xs):\n    return list(map(helper, xs))\n"
+    assert "m:g" in changed(Package({"m.py": src.format(n=1)}), Package({"m.py": src.format(n=2)}))
+
+def test_registry_mutation():
+    """Module-level statements that change a name (REG["a"] = ...) belong to that name."""
+    src = "REG = {{}}\nREG['a'] = {n}\n\ndef f():\n    return REG\n"
+    assert "m:f" in changed(Package({"m.py": src.format(n=1)}), Package({"m.py": src.format(n=2)}))
+
+def test_conditional_import():
+    src = "try:\n    import json\nexcept ImportError:\n    json = {v}\n\ndef f(s):\n    return json.loads(s)\n"
+    assert "m:f" in changed(Package({"m.py": src.format(v="None")}), Package({"m.py": src.format(v="0")}))
+
+def test_star_import():
+    use = "from .x import *\n\ndef f():\n    return LIMIT\n"
+    a = Package({"pkg/__init__.py": "", "pkg/x.py": "LIMIT = 1\n", "pkg/use.py": use})
+    b = Package({"pkg/__init__.py": "", "pkg/x.py": "LIMIT = 2\n", "pkg/use.py": use})
+    assert "pkg.use:f" in changed(a, b)
+
 def test_prefixes():
     """Leaves and interior nodes use different prefixes."""
     p = Package({"m.py": "def f():\n    return 1\n"})

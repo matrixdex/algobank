@@ -53,7 +53,7 @@ Banking and insurance (vouches, deposits, penalties, interest, payouts) sit on t
 |---|---|
 | **Package** | A set of source files analyzed together. One package has one code Merkle tree. |
 | **Part** | A package admitted to the garden. The unit that is confined and run. |
-| **Node** | A function or method (`module:qualname`), or a module's top-level code (`module:<module>`). |
+| **Node** | A function or method (`module:qualname`), a module's top-level code (`module:<module>`), or a module value (`module:=name`). |
 | **Own hash** | The hash of a node's normalized syntax tree alone. |
 | **Merkle hash** | The own hash combined with the Merkle hashes of every node it calls and the pins of outside packages it uses. |
 | **Leaf** | `H(0x00 ‖ node_id ‖ "=" ‖ merkle_hash)`. It commits to the node's public name and its content. |
@@ -72,7 +72,9 @@ Banking and insurance (vouches, deposits, penalties, interest, payouts) sit on t
 ### 3.1 Nodes
 
 - Every function and method, at any class depth. Async functions count as functions.
-- Each module's top-level code, called `<module>`: the module with every function body removed. It keeps imports, constants, class headers and any statement that runs at import time.
+- Each module's top-level code, called `<module>`: the module with every function body removed. It keeps imports, constants, class headers and any statement that runs at import time. It stands for importing the module.
+- Each module-level name, called a module value (`module:=name`): the top-level statements that bind or may change that name. These are assignments, imports, class definitions without their methods, conditional definitions, and statements that change the name (`REG["a"] = f`, `sys.path.insert(...)`). A statement that binds several names belongs to each of them.
+- Each module's remaining top-level statements, which bind or change no name, called `module:=<effects>`.
 - Nested functions and lambdas are part of their parent node.
 
 ### 3.2 Normalization
@@ -104,7 +106,7 @@ Every item joined by `|` is a 64-character hex digest, so the encoding splits ba
 
 Proven property (section 10.5): if a node's Merkle hash is unchanged, every node it can reach has a counterpart with the same Merkle hash, the same own hash and the same pins. An unchanged hash therefore means unchanged code underneath, which is what makes reusing results safe.
 
-Every function also depends on its module's top-level code, which holds the module's constants, class attributes and imports, and itself depends on the top-level code of the package modules it imports. A change to a constant therefore changes the hash of every function in the module, including constants imported from other modules. A function that writes module state through `global` is a dependency of the module's top-level code, so every reader of that state depends on the writer. This over-invalidates within a module and never under-invalidates for these cases.
+A node depends on exactly what it uses. A function depends on the functions it calls or references and on the module values it reads, including values read through another module (`config.LIMIT` depends on `config:=LIMIT` only). A method also depends on its class's value, which holds the class attributes. A module value depends on what its statements read, call or import, so `from .config import LIMIT` makes the local value depend on `config:=LIMIT`. A function that writes a name through `global` is a dependency of that name's value, so every reader depends on the writer. Every function in a module depends on the module's `<effects>` node, if it has one. A change to one module-level name therefore changes only the code that reads it.
 
 Recursion and mutual recursion form cycles, which is why the hash is computed per component: each component is hashed as one unit, and each member then combines that value with its own hash.
 
@@ -423,7 +425,7 @@ Example admission entry (digests shortened):
 | `v0.1/pkgmerkle.py` | The analyzer: code Merkle tree, call resolution, scope detection and roll-up, `TOP`, code root and scope root. Standard library only. |
 | `v0.1/synth_demo.py` | Test on a synthetic eight-file package with a dynamic plugin loader, a computed `getattr` dispatcher, and plugins that use files and the network. |
 | `v0.1/dexweb_v2.py` | Release-history test over every published wheel of the `dexweb` package. |
-| `v0.1/test_pkgmerkle.py` | Regression tests: full digests, prefixes, module-level dependencies (constants, imported constants, class attributes, `global` writers), and one test per checker condition. |
+| `v0.1/test_pkgmerkle.py` | Regression tests: full digests, prefixes, module-level dependencies (constants, imported constants, class attributes, `global` writers, references, registries, conditional and star imports), precision (unrelated changes do not spread), and one test per checker condition. |
 | `v0.1/algobank_diff.py` | Diff tool: compares two versions of a package and reports new scope, dynamic code, hooks, binaries and dependencies (section 10.6). |
 | `v0.1/test_diff.py` | Tests for the diff tool on synthetic wheels that reproduce real attack patterns. |
 | `v0.1/proofs/CodeRoot.v` | Coq proof of the code root computation (section 10.4). |
@@ -438,11 +440,11 @@ Built: sections 3.1–3.5, 3.6 (recording pins), 3.7, 3.8, 4.2–4.4, and the pr
 
 | Item | Value |
 |---|---|
-| Code root | `874763c0954c893940532ec1c042fdb3ecc89b4f0c1fe0bb10140478bd85cbf7` |
+| Code root | `9a33a53fa0d6857c9a88de38dfa8b66bee420a668d26dc288764207e093ff28f` |
 | Scope | none |
 | Scope root | `140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe` |
-| Nodes | 30 |
-| File SHA-256 | `ee2b180664be4d69db3541e7e3218af724382106b5ef7e383a2c437c042026f1` |
+| Nodes | 50 |
+| File SHA-256 | `e6c063ac2c36851dd26ae4d9a0e75fb0970b5ff38a45d5b835e9e456132a6a29` |
 | Python | 3.14 |
 
 To recompute:
@@ -463,7 +465,7 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))"
 
 | Check | Result |
 |---|---|
-| Edit `util.clean()`: nodes changed with whole-package resolution | 5 (`util.clean`, `store.save`, `plugins.a.run`, `core.run`, `core.shout`); per-file analysis finds only 1 |
+| Edit `util.clean()`: nodes changed with whole-package resolution | The 5 functions that call it directly or indirectly (`util.clean`, `store.save`, `plugins.a.run`, `core.run`, `core.shout`) and the 2 module values that import it; per-file analysis finds only 1 |
 | Computed import and computed `getattr` | Both nodes `TOP` |
 | Edit a plugin loaded dynamically | The plugin and the function that calls it through the loader both change |
 | Static scope at the loader vs observed at run time | Static: `TOP`, `file`, `network`. Observed with audit hooks: `file` for one plugin, `network` for the other. |
@@ -472,17 +474,17 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))"
 
 | Measure | Value |
 |---|---|
-| Median share of nodes unchanged from the previous release | 88% by count, 74% by code size |
+| Median share of nodes unchanged from the previous release | 91% by count, 74% by code size |
 | Review work across all releases when results are reused | 25% of the work without reuse |
 | Updates with no code change | 8 of 24 |
 | Scope change detected | `process` first appears in 4.2.3 |
 | Scope per module (4.2.5) | `dexweb.dexgen`: `file`, 7 of 22 nodes pure; `dexweb.dexweb`: `file`, `process`, 1 of 11 pure |
 | Dependencies | 4, none pinned |
-| Module-level dependency | In 4.2.4 a module's top-level code changed; three functions that read it (`Dexweb.__init__`, `publish_folder`, `run_git`) change hash only because functions depend on module-level code. Without that dependency, their earlier results would have been reused wrongly. |
+| Module-level dependency | In 4.2.4 the import statement of `dexweb.dexweb` changed. Three functions that read the imported names (`Dexweb.__init__`, `publish_folder`, `run_git`) change hash although their own code did not. |
 
 The dexweb figures come from one small package with one author and should not be generalized.
 
-**Self-analysis:** `pkgmerkle.py` analyzed by itself has 30 nodes, no scope and no `TOP`, and gives identical hashes on repeated runs. A one-line change to `H()` changes `H` and the eight nodes that call it directly or indirectly; the other 21 nodes keep their hashes.
+**Self-analysis:** `pkgmerkle.py` analyzed by itself has 50 nodes, no scope and no `TOP`, and gives identical hashes on repeated runs. A one-line change to `H()` changes `H` and the eight nodes that call it directly or indirectly; the other 41 nodes keep their hashes.
 
 ### 10.4 Proof of the code root
 
@@ -566,6 +568,8 @@ Exit status is 1 when any finding is high, 0 otherwise, and 2 on error, so the t
 | Normal updates of popular packages: requests 2.31.0→2.32.3, urllib3 2.2.1→2.2.2, idna 3.6→3.7, rich 13.7.0→13.7.1, packaging 24.0→24.1 | Four have no medium or high findings. requests has one real change flagged high: a new computed import, run at import time, that selects a character-detection library. |
 | dexweb 4.2.2→4.2.3 | `process` reported as new, entering at `Dexweb.run_git` |
 
+**Reuse on real updates.** With dependencies limited to the module values a function reads, the share of nodes whose hash is unchanged is 70% for rich 13.7.0→13.7.1, 72% for requests 2.31.0→2.32.3, 66% for urllib3 2.2.1→2.2.2, 75% for idna 3.6→3.7 and 38% for packaging 24.0→24.1. With the earlier rule, where a function depended on its module's entire top-level code, rich kept 6% and requests 1%.
+
 The known malicious releases of LiteLLM (1.82.7, 1.82.8, 1.107.0) have been removed from PyPI, so they could not be tested directly.
 
 ### 10.7 Running
@@ -618,13 +622,12 @@ python3.14 -I v0.1/proofs/check_model.py
 | G4 | Literal imports of outside modules through `import_module` do not add scope. | Scope is under-reported. | Map literal imports through the scope table. |
 | G5 | The scope table is short, Python only, and partly matched by method name. | Unlisted libraries are missed. | A maintained API-to-scope table per language. |
 | G6 | Compiled code is invisible to the analyzer. | Native scope is unknown. | Native tier with confinement and native-code evidence (section 5.7). |
-| G7 | Methods in base classes are reached only through the name-based fallback. | Over-approximation. | Class-hierarchy resolution. |
+| G7 | A method call on an object of unknown type links to every package method with that name (`x.append()` to `Text.append`). | Over-approximation, sound but costly: in rich 13.7.0→13.7.1, 771 nodes change hash through dependencies; without this linking, 219 would. | Infer receiver types; link only to methods of matching classes. |
 | G8 | No inclusion proofs for code roots. | A single node cannot be proven without the full leaf list. | Merkle audit paths over the sorted leaves. |
 | G10 | Dynamic behavior outside the listed patterns, such as functions stored in dictionaries and called by key. | Not detected. | Runtime enforcement. |
 | G11 | Hashes depend on the `ast.dump` format of the interpreter. | A different Python version can give a different root. | Record the version with every root; test roots across versions; move to a version-independent serialization. |
 | G12 | Introspection through dunder attributes or frames can reach effectful functions without importing them. | Such code is reported with no scope. Soundness gap. | Treat introspection as `TOP`; allowlist for compute parts (section 4.5); enforce at the boundary. |
 | G13 | No `clock` or `entropy` detection. | Code that is not deterministic can appear pure. | Add both scopes to the detection table. |
-| G14 | A function depends on the whole top-level code of its module, which depends on the top-level code of every module it imports. | Over-invalidation: in rich 13.7.0→13.7.1, two modules' top-level code changed and 832 of 885 nodes changed hash, although only those two changed code. Reuse of results collapses on packages whose modules import each other. | Depend only on the module-level names a function actually reads. |
 
 ## 12. Roadmap (v0.2)
 
@@ -637,7 +640,7 @@ python3.14 -I v0.1/proofs/check_model.py
 7. Implement the admission gates as code.
 8. Run the release-history test on larger packages with many contributors.
 9. Evaluate the component tier for pure-Python parts with `componentize-py`.
-10. Fix G14 so a function depends only on the module-level names it reads, then rerun the release-history test on rich and requests.
+10. Narrow G7 with receiver type inference, then remeasure reuse on rich and requests.
 11. Take the diff tool to users: a GitHub Action that comments on pull requests changing `requirements.txt`, `uv.lock` or `poetry.lock`; a shared cache of reports keyed by artifact hash; and an MCP server for coding agents. Measure how often a report changes a decision and how often users mark findings as harmless.
 12. Continue proving the core on the front end, back end and checker split (section 3.8):
     1. Roll-up soundness and `TOP` propagation, with the matching conditions added to the checker.

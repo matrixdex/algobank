@@ -9,7 +9,7 @@ Improvements over merkle_code.py / release_reuse.py:
       - non-literal import                                            -> edge to EVERY module in the package
   * capabilities come from a table keyed by the import origin, not only from bare names
 """
-import ast, copy, hashlib, sys
+import ast, builtins, copy, hashlib, sys
 
 TOP = "TOP"
 DIGEST_LEN = 64      # full SHA-256 in hex
@@ -69,6 +69,51 @@ def modname_of(path):
     m = path[:-3].replace("/", ".")
     return m[:-9] if m.endswith(".__init__") else m
 
+# ---- module values: top-level statements grouped by the names they bind or change ------
+
+def _root_name(e):
+    while isinstance(e, (ast.Attribute, ast.Subscript, ast.Call, ast.Starred)):
+        e = e.func if isinstance(e, ast.Call) else e.value
+    return e.id if isinstance(e, ast.Name) else None
+
+def _walk_shallow(node):
+    """ast.walk that yields nested function and lambda definitions but does not enter them."""
+    todo = [node]
+    while todo:
+        n = todo.pop()
+        yield n
+        if n is not node and isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        todo.extend(ast.iter_child_nodes(n))
+
+def bound_names(st):
+    """Module-level names a top-level statement binds or may change."""
+    if isinstance(st, ast.ClassDef): return {st.name}
+    if isinstance(st, (ast.Import, ast.ImportFrom)):
+        return {"*" if a.name == "*" else (a.asname or a.name.split(".")[0]) for a in st.names}
+    out = set()
+    for n in _walk_shallow(st):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)): out.add(n.id)
+        elif isinstance(n, (ast.Attribute, ast.Subscript)) and isinstance(n.ctx, (ast.Store, ast.Del)):
+            r = _root_name(n); r and out.add(r)
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+            r = _root_name(n.func); r and out.add(r)          # a method call may change its receiver
+        elif n is not st and isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            out.add(n.name)                                   # conditional definitions
+        elif n is not st and isinstance(n, (ast.Import, ast.ImportFrom)):
+            out |= bound_names(n)
+    return out
+
+def class_skeleton(cdef):
+    """A class definition without its methods, which are nodes of their own."""
+    c = copy.deepcopy(cdef)
+    def strip(k):
+        k.body = [b for b in k.body if not isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef))] or [ast.Pass()]
+        for b in k.body:
+            if isinstance(b, ast.ClassDef): strip(b)
+    strip(c); strip_doc(c)
+    return c
+
 class Package:
     def __init__(self, files, pins=None):
         self.pins = pins or {}
@@ -83,6 +128,16 @@ class Package:
         for mod, (path, tree) in self.trees.items():
             self.classes[mod], self.top[mod] = set(), {}
             self._collect(mod, tree.body, None)
+        self.values, self.effects = {}, {}
+        for mod, (path, tree) in self.trees.items():
+            groups, effects = {}, []
+            for st in tree.body:
+                if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef)): continue
+                if isinstance(st, ast.Expr) and isinstance(st.value, ast.Constant): continue   # docstring
+                names = bound_names(st)
+                if not names: effects.append(st)
+                for nm in names: groups.setdefault(nm, []).append(st)
+            self.values[mod], self.effects[mod] = groups, effects
         self.by_method = {}
         for nid in self.funcs:
             self.by_method.setdefault(nid.split(":", 1)[1].split(".")[-1], []).append(nid)
@@ -136,15 +191,40 @@ class Package:
         init = f"{mod}:{q}.__init__"
         return [init] if init in self.funcs else []
 
+    def _name_refs(self, mod, name):
+        """Nodes a read of module-level `name` in `mod` depends on."""
+        out = []
+        ent = self.top.get(mod, {}).get(name)
+        if ent and ent[0] == "fn": out.append(f"{mod}:{ent[1]}")
+        if name in self.values.get(mod, {}): out.append(f"{mod}:={name}")
+        elif not out and "*" in self.values.get(mod, {}) and not hasattr(builtins, name):
+            out.append(f"{mod}:=*")                           # may come from an `import *`
+        return out
+
+    def _attr_refs(self, mod, name):
+        """Nodes a read of `mod.name` depends on, from outside the module."""
+        out = self._name_refs(mod, name)
+        if not out and not f"{mod}.{name}" in self.trees: out.append(f"{mod}:<module>")
+        return out
+
     # ---- scanning ----------------------------------------------------------
-    def _scan(self, root, mod, cls, names, skeleton=False):
-        """-> (edges, caps, flags, ext_roots, stats)"""
-        edges, caps, flags, ext_roots = set(), set(), set(), set()
+    def _scan(self, root, mod, cls, names, skeleton=False, local=None):
+        """-> (edges, caps, flags, ext_roots, stats, reads). Reads are collected when `local` is given:
+        the names that are local to the scanned code and so are not module-level reads."""
+        edges, caps, flags, ext_roots, reads = set(), set(), set(), set(), set()
         stats = {"cross": 0, "cha": 0}
         mod_skel = lambda m: f"{m}:<module>"
         for n in ast.walk(root):
             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in names and names[n.id][0] == "ext":
                 ext_roots.add(names[n.id][1][0])
+            if local is not None and isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id not in local:
+                reads.update(self._name_refs(mod, n.id))
+            if local is not None and isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Load):
+                ch = dotted(n)
+                if ch and ch[0] in names and names[ch[0]][0] == "mod" and ch[0] not in local:
+                    m, rest = names[ch[0]][1], ch[1:]
+                    while rest and f"{m}.{rest[0]}" in self.trees: m, rest = f"{m}.{rest[0]}", rest[1:]
+                    if rest: reads.update(self._attr_refs(m, rest[0]))
             if isinstance(n, (ast.Import, ast.ImportFrom)) and skeleton:
                 for nm, b in self._bind_imports(mod, n).items():
                     if b[0] == "mod": edges.add(mod_skel(b[1])); stats["cross"] += 1
@@ -221,7 +301,7 @@ class Package:
                 if ext[0] in DESER_MODS and ext[-1] in ("load", "loads", "open", "Unpickler"): flags.add("dyn-exec")
                 if ext[0] == "importlib" and ext[-1] in ("import_module", "__import__"): self._dyn_import(first_const, edges, flags)
                 if ext[:3] == ["importlib", "metadata", "entry_points"] or ext[-1] == "entry_points": flags.add("dyn-import")
-        return edges, caps, flags, ext_roots, stats
+        return edges, caps, flags, ext_roots, stats, reads
 
     def _dyn_import(self, literal, edges, flags):
         if literal and literal in self.trees: edges.add(f"{literal}:<module>")
@@ -240,21 +320,45 @@ class Package:
                 def visit_FunctionDef(self, n): return None
                 def visit_AsyncFunctionDef(self, n): return None
             skel = ast.fix_missing_locations(Drop().visit(skel))
-            e, c, fl, er, st = self._scan(skel, mod, None, names_mod, skeleton=True)
-            raw[f"{mod}:<module>"] = dict(own=H(ast.dump(skel, annotate_fields=False)), size=size(skel), edges=e, caps=c, flags=fl, ext=er, stats=st)
+            e, c, fl, er, st, _ = self._scan(skel, mod, None, names_mod, skeleton=True)
+            raw[f"{mod}:<module>"] = dict(own=H(ast.dump(skel, annotate_fields=False)), size=size(skel), edges=e,
+                                          calls=set(e), caps=c, flags=fl, ext=er, stats=st)
+            # module values: hashing only; their import-time effects are part of <module>
+            groups = dict(self.values[mod])
+            if self.effects[mod]: groups["<effects>"] = self.effects[mod]
+            for name, stmts in groups.items():
+                body = [class_skeleton(x) if isinstance(x, ast.ClassDef) else x for x in stmts]
+                block = ast.Module(body=body, type_ignores=[])
+                e, c, fl, er, st, rd = self._scan(block, mod, None, names_mod, local=set())
+                for x in stmts:
+                    if isinstance(x, ast.ImportFrom):
+                        for nm, b in self._bind_imports(mod, x).items():
+                            if b[0] == "sym": rd.update(self._attr_refs(b[1], b[2]))
+                            if b[0] == "star": rd.add(f"{b[1]}:<module>")
+                rd.discard(f"{mod}:={name}")
+                raw[f"{mod}:={name}"] = dict(own=H(ast.dump(block, annotate_fields=False)), size=size(block),
+                                             edges=e | rd, calls=set(), caps=set(), flags=set(), ext=er,
+                                             stats=st)
         for nid, (fn, mod, cls) in self.funcs.items():
             names = dict(self._bind_imports(mod, self.trees[mod][1]))
             names.update(self._bind_imports(mod, fn))
-            e, c, fl, er, st = self._scan(fn, mod, cls, names)
-            raw[nid] = dict(own=H(canon_fn(fn)), size=size(fn), edges=e, caps=c, flags=fl, ext=er, stats=st)
-        for r in raw.values():
-            r["calls"] = set(r["edges"])      # code that runs: calls, imports, import-time calls
+            declared_global = {g for n in ast.walk(fn) if isinstance(n, ast.Global) for g in n.names}
+            local = set(local_map(fn)) - declared_global
+            e, c, fl, er, st, rd = self._scan(fn, mod, cls, names, local=local)
+            if cls is not None:
+                rd.add(f"{mod}:={cls.split('.')[0]}")             # a method reads its class's attributes
+            if self.effects[mod]:
+                rd.add(f"{mod}:=<effects>")
+            raw[nid] = dict(own=H(canon_fn(fn)), size=size(fn), edges=e | rd, calls=set(e), caps=c, flags=fl,
+                            ext=er, stats=st)
         for nid, (fn, mod, cls) in self.funcs.items():
-            # a function reads its module's constants, class attributes and imported names
-            raw[nid]["edges"].add(f"{mod}:<module>")
-            # module state written through `global` is read by every function in the module
-            if any(isinstance(n, ast.Global) for n in ast.walk(fn)):
-                raw[f"{mod}:<module>"]["edges"].add(nid)
+            # module state written through `global` depends on the function that writes it
+            for g in {g for n in ast.walk(fn) if isinstance(n, ast.Global) for g in n.names}:
+                key = f"{mod}:={g}"
+                if key not in raw:
+                    raw[key] = dict(own=H(""), size=0, edges=set(), calls=set(), caps=set(), flags=set(),
+                                    ext=set(), stats={"cross": 0, "cha": 0})
+                raw[key]["edges"].add(nid)
         for r in raw.values():
             r["edges"] = {x for x in r["edges"] if x in raw}
             r["calls"] = {x for x in r["calls"] if x in raw}

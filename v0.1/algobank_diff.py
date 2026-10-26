@@ -282,7 +282,7 @@ def show_findings(fs):
 def print_diff(name, r):
     n = r["nodes"]
     print(f"{name}: {r['old']['artifact']} -> {r['new']['artifact']}")
-    print(f"  functions and modules: {n['total']} ({n['unchanged']} unchanged, {n['code_changed']} code changed, "
+    print(f"  nodes (functions, classes, module values): {n['total']} ({n['unchanged']} unchanged, {n['code_changed']} code changed, "
           f"{n['dependency_changed']} affected by a changed dependency, {n['added']} added, {n['removed']} removed)")
     print(f"  scope: {', '.join(r['scope']['old']) or 'none'} -> {', '.join(r['scope']['new']) or 'none'}")
     if r["findings"]:
@@ -292,7 +292,7 @@ def print_diff(name, r):
     for c in r["coverage"]: print(f"  note: {c}")
 
 def print_scope(name, r):
-    print(f"{name}: {r['artifact']}  ({r['nodes']} functions and modules)")
+    print(f"{name}: {r['artifact']}  ({r['nodes']} nodes)")
     print(f"  scope: {', '.join(r['scope']) or 'none'}")
     for m, s in r["modules"].items():
         if s: print(f"    {m}: {', '.join(s)}")
