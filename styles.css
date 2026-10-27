@@ -93,7 +93,7 @@ footer h3 {
 footer nav {
   margin-top: 0;
 }
-.index h1, #q::placeholder {
+h1, #q::placeholder {
   text-align: center;
 }
 footer nav {
