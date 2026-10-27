@@ -18,7 +18,7 @@ rows = "".join(
     + cell(r.get("sha256", "")) + cell(r["code_root"]) + "</tr>"
     for r in records)
 body = [
-    "<input id='q' type='text' placeholder='Search package in algobank (for example, dexweb v4.2.0)' aria-label='Search the bank' autocomplete='off' spellcheck='false'>"
+    "<input id='q' type='text' placeholder='Search package in algobank (for example, dexweb v4.2.0)' data-phone='Search algobank' aria-label='Search the bank' autocomplete='off' spellcheck='false'>"
     "<div id='msg' role='status'></div>",
     "<div class='scroll'><table id='bank'><thead><tr><th>package</th><th>version</th><th>scope</th><th>high</th>"
     "<th>warning</th><th>admitted</th><th>sha256</th><th>code root</th></tr></thead><tbody>" + rows + "</tbody></table></div>",
