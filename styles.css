@@ -64,52 +64,18 @@ img {
 #msg:not(:empty) {
   margin: 8px 0 16px; font-family: monospace; color: #ff4141;  /* "... not algobanked" is red */
 }
+.scroll {
+  overflow-x: auto; max-width: 100%; margin: 16px 0;
+}
 #bank {
-  margin: 0 auto 16px; border-collapse: collapse; font: 14px monospace; color: rgb(220, 220, 220);  /* centered */
+  border-collapse: collapse; font: 14px monospace;
+  color: rgb(220, 220, 220); white-space: nowrap; overflow-wrap: normal; margin: 0;
 }
 #bank th, #bank td {
-  text-align: left; padding: 6px 24px 6px 0; white-space: nowrap;
+  text-align: left; padding: 6px 16px 6px 0; border-bottom: 1px solid rgb(20, 20, 20);
 }
 #bank th {
-  color: white; font-weight: 400; border-bottom: 1px solid rgb(220, 220, 220);
-}
-#bank tbody {
-  border-bottom: 1px solid rgb(20, 20, 20);
-}
-#bank tr.hashes td {
-  padding-top: 0; white-space: normal;
-}
-#bank tr.hashes span {
-  display: block;
-}
-#bank tr.hashes code {
-  padding: 0; background: none; font-size: 100%; overflow-wrap: anywhere;  /* full hashes, wrapped when there is no room */
-}
-@media screen and (max-width: 819px) {  /* phones and tablets: each record is a block of labeled fields (the table needs 804px) */
-  #bank, #bank tbody, #bank tr {
-    display: block;
-  }
-  #bank thead {
-    display: none;
-  }
-  #bank tbody {
-    padding: 10px 0;
-  }
-  #bank td {
-    display: inline-block; padding: 2px 16px 2px 0; white-space: normal;
-  }
-  #bank tr:first-child td::before {
-    content: attr(data-label) " "; color: white;
-  }
-  #bank tr:first-child td:first-child {
-    display: block; color: white; font-weight: 600;
-  }
-  #bank tr:first-child td:first-child::before {
-    content: none;
-  }
-  #bank tr.hashes td {
-    display: block; padding-top: 2px;
-  }
+  color: white; font-weight: 400; border-bottom-color: rgb(220, 220, 220);
 }
 button {
   font: 14px monospace; cursor: pointer;
