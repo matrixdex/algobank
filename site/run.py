@@ -17,16 +17,13 @@ rows = "".join(
     + cell(r["findings"]["high"]) + cell(r["findings"]["warning"]) + cell(r["admitted"])
     + cell(r.get("sha256", "")) + cell(r["code_root"]) + "</tr>"
     for r in records)
-with open("bank.js") as f:
-    search = f.read()
 body = [
     "<input id='q' type='text' placeholder='package v1.2.3' aria-label='Search the bank' autocomplete='off' spellcheck='false'>"
     "<div id='msg' role='status'></div>",
     "<div class='scroll'><table id='bank'><thead><tr><th>package</th><th>version</th><th>scope</th><th>high</th>"
     "<th>warning</th><th>admitted</th><th>sha256</th><th>code root</th></tr></thead><tbody>" + rows + "</tbody></table></div>",
     "<a href='https://github.com/matrixdex/algobank/blob/live/bank.jsonl'>bank.jsonl</a>"
-    "<script type='application/x-ndjson' id='bank.jsonl'>\n" + bank.replace("</", "<\\/") + "</script>"
-    "<script>" + search + "</script>",
+    "<script type='application/x-ndjson' id='bank.jsonl'>\n" + bank.replace("</", "<\\/") + "</script>",
 ]
 with open("data.json") as f:
     pages = json.load(f)
