@@ -10,18 +10,32 @@ subprocess.run(["git", "fetch", "-q", "origin", "live"], check=True)
 bank = subprocess.run(["git", "show", "origin/live:bank.jsonl"], capture_output=True, text=True, check=True).stdout
 records = [json.loads(line) for line in bank.splitlines() if line.strip()]
 
-def cell(v): return "<td>" + html.escape(str(v)) + "</td>"
-rows = "".join(
-    f"<tr data-name='{html.escape(r['name'])}' data-version='{html.escape(r['version'])}'>"
-    + cell(r["name"]) + cell(r["version"]) + "<td>" + (", ".join("<code class='top'>TOP</code>" if s == "TOP" else html.escape(s) for s in r["scope"]) or "none") + "</td>"
-    + cell(r["findings"]["high"]) + cell(r["findings"]["warning"]) + cell(r["admitted"])
-    + cell(r.get("sha256", "")) + cell(r["code_root"]) + "</tr>"
+def esc(v): return html.escape(str(v))
+def short(h):                                               # a hash: its first 8 characters, an ellipsis, a copy button
+    return f"<code>{esc(h[:8])}…</code><button type='button' class='copy' data-copy='{esc(h)}' aria-label='copy {esc(h)}'>copy</button>"
+def text(v):                                                # any 64-character hash inside a text is shortened too
+    return re.sub(r"[0-9a-f]{64}", lambda m: short(m.group(0)), esc(v))
+def scope(r):
+    return ", ".join("<code class='top'>TOP</code>" if s == "TOP" else esc(s) for s in r["scope"]) or "none"
+def findings(f, keys=("high", "warning")):
+    colors = {"high": "high", "warning": "warning", "medium": "medium", "low": "low"}
+    return " ".join(f"<span class='{colors.get(k, '') if f[k] else ''}'>{f[k]} {k}</span>" for k in keys)
+def details(r):                                             # every field of the record, in the order of the file
+    rows = [("version", esc(r["version"])), ("admitted", esc(r["admitted"])), ("scope", scope(r)),
+            ("findings", findings(r["findings"], ("high", "warning", "medium", "low", "info")))]
+    rows += [(k.replace("_", " "), short(r[k]) if k in ("sha256", "code_root") else text(r[k]))
+             for k in ("file", "sha256", "code_root", "nodes", "source", "used_for", "algobanked_by") if k in r]
+    return "<dl>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows) + "</dl>"
+rows = "".join(                                             # one tbody per record: the entry, and its details below it
+    f"<tbody data-name='{esc(r['name'])}' data-version='{esc(r['version'])}'>"
+    f"<tr class='entry' tabindex='0' aria-expanded='false'><td class='pkg'>{esc(r['name'])} v{esc(r['version'])}</td>"
+    f"<td class='scope'>{scope(r)}</td><td>{findings(r['findings'])}</td></tr>"
+    f"<tr class='details' hidden><td colspan='3'>{details(r)}</td></tr></tbody>"
     for r in records)
 page = (
     "<input id='q' type='text' placeholder='Search package in algobank (for example, dexweb v4.2.0)' data-phone='Search algobank' aria-label='Search the bank' autocomplete='off' spellcheck='false'>\n"
     "<div id='msg' role='status'></div>\n"
-    "<div class='scroll'><table id='bank'><thead><tr><th>package</th><th>version</th><th>scope</th><th>high</th>"
-    "<th>warning</th><th>admitted</th><th>sha256</th><th>code root</th></tr></thead><tbody>" + rows + "</tbody></table></div>\n"
+    "<table id='bank'><thead><tr><th>package</th><th class='scope'>scope</th><th>findings</th></tr></thead>" + rows + "</table>\n"
     "<p><button type='button' data-export='jsonl'>export as JSONL</button> <button type='button' data-export='csv'>export as CSV</button></p>\n"
     "<script type='application/x-ndjson' id='bank.jsonl'>\n" + bank.replace("</", "<\\/") + "</script>\n")
 with open("config.json") as f:
