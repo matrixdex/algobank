@@ -77,3 +77,10 @@ img {
 #bank th {
   color: white; font-weight: 400; border-bottom-color: rgb(220, 220, 220);
 }
+button {
+  font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; cursor: pointer;
+  color: #00ff41; background-color: rgb(20, 20, 20); border: 1px solid #00ff41; border-radius: 6px; padding: 8px 12px; margin: 0 8px 8px 0;
+}
+button:hover {
+  background-color: black;
+}

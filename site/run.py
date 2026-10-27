@@ -13,7 +13,7 @@ records = [json.loads(line) for line in bank.splitlines() if line.strip()]
 def cell(v): return "<td>" + html.escape(str(v)) + "</td>"
 rows = "".join(
     f"<tr data-name='{html.escape(r['name'])}' data-version='{html.escape(r['version'])}'>"
-    + cell(r["name"]) + cell(r["version"]) + cell(" ".join(r["scope"]) or "none")
+    + cell(r["name"]) + cell(r["version"]) + cell(", ".join(r["scope"]) or "none")
     + cell(r["findings"]["high"]) + cell(r["findings"]["warning"]) + cell(r["admitted"])
     + cell(r.get("sha256", "")) + cell(r["code_root"]) + "</tr>"
     for r in records)
@@ -22,12 +22,12 @@ body = [
     "<div id='msg' role='status'></div>",
     "<div class='scroll'><table id='bank'><thead><tr><th>package</th><th>version</th><th>scope</th><th>high</th>"
     "<th>warning</th><th>admitted</th><th>sha256</th><th>code root</th></tr></thead><tbody>" + rows + "</tbody></table></div>",
-    "<a href='https://github.com/matrixdex/algobank/blob/live/bank.jsonl'>bank.jsonl</a>"
+    "<button type='button' data-export='jsonl'>export as JSONL</button> <button type='button' data-export='csv'>export as CSV</button>"
     "<script type='application/x-ndjson' id='bank.jsonl'>\n" + bank.replace("</", "<\\/") + "</script>",
 ]
 with open("data.json") as f:
     pages = json.load(f)
-next(p for p in pages if p["title"] == "Bank")["body"] = body
+next(p for p in pages if p["title"] == "algobank Algorithm Bank")["body"] = body
 with open("data.json", "w") as f:
     f.write(json.dumps(pages, indent=4) + "\n")
 
