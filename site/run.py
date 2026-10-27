@@ -10,21 +10,18 @@ subprocess.run(["git", "fetch", "-q", "origin", "live"], check=True)
 bank = subprocess.run(["git", "show", "origin/live:bank.jsonl"], capture_output=True, text=True, check=True).stdout
 records = [json.loads(line) for line in bank.splitlines() if line.strip()]
 
-def cell(label, v): return f"<td data-label='{label}'>" + v + "</td>"
-def scope(r): return ", ".join("<code class='top'>TOP</code>" if s == "TOP" else html.escape(s) for s in r["scope"]) or "none"
-rows = "".join(                                             # one tbody per record: its fields, then its hashes
-    f"<tbody data-name='{html.escape(r['name'])}' data-version='{html.escape(r['version'])}'><tr>"
-    + cell("package", html.escape(r["name"])) + cell("version", html.escape(r["version"])) + cell("scope", scope(r))
-    + cell("high", str(r["findings"]["high"])) + cell("warning", str(r["findings"]["warning"])) + cell("admitted", html.escape(r["admitted"]))
-    + "</tr><tr class='hashes'><td colspan='6'>"
-    + (f"<span>sha256 <code>{html.escape(r['sha256'])}</code></span>" if r.get("sha256") else "")
-    + f"<span>code root <code>{html.escape(r['code_root'])}</code></span></td></tr></tbody>"
+def cell(v): return "<td>" + html.escape(str(v)) + "</td>"
+rows = "".join(
+    f"<tr data-name='{html.escape(r['name'])}' data-version='{html.escape(r['version'])}'>"
+    + cell(r["name"]) + cell(r["version"]) + "<td>" + (", ".join("<code class='top'>TOP</code>" if s == "TOP" else html.escape(s) for s in r["scope"]) or "none") + "</td>"
+    + cell(r["findings"]["high"]) + cell(r["findings"]["warning"]) + cell(r["admitted"])
+    + cell(r.get("sha256", "")) + cell(r["code_root"]) + "</tr>"
     for r in records)
 page = (
     "<input id='q' type='text' placeholder='Search package in algobank (for example, dexweb v4.2.0)' data-phone='Search algobank' aria-label='Search the bank' autocomplete='off' spellcheck='false'>\n"
     "<div id='msg' role='status'></div>\n"
-    "<table id='bank'><thead><tr><th>package</th><th>version</th><th>scope</th><th>high</th>"
-    "<th>warning</th><th>admitted</th></tr></thead>" + rows + "</table>\n"
+    "<div class='scroll'><table id='bank'><thead><tr><th>package</th><th>version</th><th>scope</th><th>high</th>"
+    "<th>warning</th><th>admitted</th><th>sha256</th><th>code root</th></tr></thead><tbody>" + rows + "</tbody></table></div>\n"
     "<p><button type='button' data-export='jsonl'>export as JSONL</button> <button type='button' data-export='csv'>export as CSV</button></p>\n"
     "<script type='application/x-ndjson' id='bank.jsonl'>\n" + bank.replace("</", "<\\/") + "</script>\n")
 with open("config.json") as f:
