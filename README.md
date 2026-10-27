@@ -29,9 +29,9 @@ It reports, by severity:
 - new native binaries, which it cannot analyze
 - new dependencies, whose code it does not analyze, so their scope is unknown
 
-Every result is also checked against known-bad data shipped inside Algobank: releases reported as malicious (OpenSSF) or as having a known vulnerability (PyPA advisories), and the digests of known malicious files, checked against every file in the archive. Each result states the date of that data; update Algobank to get newer reports.
+Every result is also checked against the advisories shipped inside Algobank (`algobank/known.json`) for the 1,000 most downloaded packages: releases reported as malicious (OpenSSF) or as having a known vulnerability (PyPA), and the digests of known malicious files, checked against every file in the archive. The records are shipped as published, and Algobank's own code decides on your machine whether one applies. Each result states the date of that data; update Algobank to get newer advisories.
 
-When you have only a hash, for example from a lockfile, `algobank lookup SHA256` gives the stored report for a file of a popular package, plus any known-bad entries. A hash with no stored report is reported as unknown (`TOP`).
+Algobank stores no verdicts: every file is analyzed every time you check it. An insecure package only needs to be caught once; a secure package passes every time.
 
 Add `--json` for programs and agents. The exit status is 1 when a finding is high, so it can gate CI.
 

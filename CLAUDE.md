@@ -20,6 +20,12 @@ Noise is how libraries and generated code get better. When a finding seems like 
 
 Report a finding as found, and label any interpretation as yours. Reading meaning into a finding (or into an ambiguous instruction) is allowed and can be useful: it records what you chose. But keep the two apart: "Finding: an empty list item, probably a slip. My interpretation: a deliberate blank." Never let the interpretation replace the finding.
 
+## Asymmetry rule
+
+An insecure package only needs to be caught once; a secure package must pass verification every time. So a catch is kept (known-bad records are only ever added), and a pass is never stored or trusted from elsewhere: the codegen runs the check itself, every time. Spend CPU cycles on this redundancy.
+
+Data that agents read ships as code or as published records that code evaluates on the agent's machine, never as results interpreted elsewhere. Example: advisories ship unchanged in `algobank/known.json`, and `diff.py` evaluates their version ranges at run time; reports cite the advisory identifier instead of paraphrasing it.
+
 ## Terms
 
 - **Algobanking**: running Algobank on code (code Merkle tree, scope, checks) and saving the result in Algobank, keyed by the code's hash. An algobanked package has been analyzed and its report stored. Findings do not block algobanking: a package with native binaries is algobanked with those binaries flagged to be checked separately.

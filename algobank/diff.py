@@ -3,7 +3,6 @@
 Usage:
   algobank diff OLD NEW [--json]
   algobank scope FILE [--json]
-  algobank lookup SHA256 [--json]
 
 OLD, NEW and FILE are paths to wheel or sdist files, for example from
   pip download --only-binary :all: -d wheels/ NAME==VERSION
@@ -11,9 +10,8 @@ OLD, NEW and FILE are paths to wheel or sdist files, for example from
 Algobank reads the files you give it, in memory. It has no network access and writes no files.
 Nothing from the package is installed, imported or run.
 
-Every result is checked against the known-bad data shipped in this package: malicious releases,
-releases with known vulnerabilities, and known malicious files. lookup gives the stored report of a
-popular package's file by its SHA-256, for when you have a hash (from a lockfile) but not the file.
+Every result is checked against the advisories shipped in this package (algobank/known.json):
+malicious releases, releases with known vulnerabilities, and known malicious files.
 
 Native binaries (.so, .pyd, .dylib, .dll) are not checked: each is a high finding, "native binary
 detected. not checked", to be checked separately. With --ignore-native they are still reported, marked
@@ -21,7 +19,7 @@ ignored, and do not affect the exit status, so a package with native code can st
 
 Exit status: 0 no high-severity findings, 1 high-severity findings, 2 error.
 """
-import argparse, ast, gzip, hashlib, io, json, os, re, sys, tarfile, zipfile
+import argparse, ast, hashlib, io, json, os, re, sys, tarfile, zipfile
 
 from .pkgmerkle import Package, TOP
 
@@ -46,51 +44,103 @@ class Artifact:
         self.sha256 = hashlib.sha256(data).hexdigest()
 
 def load(path):
-    """Reads the one file it is given. Algobank reads no other files except its own package (known())."""
+    """Reads the one file it is given. The only other file Algobank reads is its own known.json."""
     if not os.path.isfile(path):
         raise SystemExit(f"error: file not found: {path}")
     with open(path, "rb") as fh:
         return Artifact(os.path.basename(path), fh.read())
 
 # ---- known data ---------------------------------------------------------------
-# Shipped in this package, built by v0.1/build_cache.py. Known-bad entries are only ever added.
-# A report is facts about one file, never a verdict that the file is safe.
+# known.json, shipped in this package and built by v0.1/build_cache.py, holds the published advisory records
+# (OSV format) for popular packages, unchanged, so anyone can read them. This code decides what they mean,
+# on the machine that runs it. A catch is kept: records are only ever added. A pass is never stored: every
+# file is analyzed every time it is checked.
 
-DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "known.json.gz")
+DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "known.json")
 _known = None
 
 def known():
+    """The records, indexed by package name and by the digests of known malicious files."""
     global _known
     if _known is None:
-        _known = dict(date=None, analyzer=None, sources=[], reports={}, bad_releases={}, bad_files={})
+        data = dict(date=None, sources=[], advisories=[])
         if os.path.isfile(DATA):
-            with gzip.open(DATA, "rt", encoding="utf-8") as fh:
-                _known = json.load(fh)
+            with open(DATA, encoding="utf-8") as fh:
+                data = json.load(fh)
+        by_name, by_digest = {}, {}
+        for e in data["advisories"]:
+            for a in e.get("affected", []):
+                if a.get("package", {}).get("ecosystem") == "PyPI":
+                    by_name.setdefault(norm(a["package"]["name"]), []).append((e, a))
+            for f in e.get("database_specific", {}).get("iocs", {}).get("files", []):
+                if f.get("digests", {}).get("sha256"):
+                    by_digest.setdefault(f["digests"]["sha256"], []).append(e)
+        _known = dict(data, by_name=by_name, by_digest=by_digest)
     return _known
-
-def analyzer_root():
-    """Code root of this analyzer. A stored report is valid only for the analyzer that produced it."""
-    here, files = os.path.dirname(os.path.abspath(__file__)), {}
-    for f in sorted(os.listdir(here)):
-        if f.endswith(".py"):
-            with open(os.path.join(here, f), encoding="utf-8") as fh:
-                files["algobank/" + f] = fh.read()
-    return Package(files).root()
 
 def norm(name):
     return re.sub(r"[-_.]+", "-", name).lower()
 
+PRE = {"a": 0, "alpha": 0, "b": 1, "beta": 1, "c": 2, "rc": 2, "pre": 2, "preview": 2}
+
+def vkey(v):
+    """Sort key for a PEP 440 version, or None if it is not one. Local labels (+...) are ignored: PyPI rejects them."""
+    m = re.fullmatch(r"v?(?:(\d+)!)?(\d+(?:\.\d+)*)"
+                     r"(?:[-_.]?(alpha|beta|preview|pre|rc|a|b|c)[-_.]?(\d*))?"
+                     r"(?:-(\d+)|[-_.]?(post|rev|r)[-_.]?(\d*))?"
+                     r"(?:[-_.]?(dev)[-_.]?(\d*))?(?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?", v.strip().lower())
+    if not m:
+        return None
+    epoch, rel, pre_l, pre_n, post_a, post_l, post_n, dev_l, dev_n = m.groups()
+    rel = [int(x) for x in rel.split(".")]
+    while len(rel) > 1 and rel[-1] == 0:
+        rel.pop()
+    post = int(post_a) if post_a else int(post_n or 0) if post_l else -1
+    dev = int(dev_n or 0) if dev_l else float("inf")
+    if pre_l: pre = (PRE[pre_l], int(pre_n or 0))
+    elif post == -1 and dev_l: pre = (-1, 0)                   # 1.0.dev1 sorts before 1.0a1
+    else: pre = (9, 0)                                         # a final release sorts after its pre-releases
+    return (int(epoch or 0), tuple(rel), pre, post, dev)
+
+def affects(a, version):
+    """Whether an advisory's `affected` block covers this version: True, False, or None if it cannot tell."""
+    if version in a.get("versions", []):
+        return True
+    rngs = [r for r in a.get("ranges", []) if r.get("type") == "ECOSYSTEM"]
+    if not rngs:
+        return not a.get("versions")                           # no versions and no ranges: every version
+    k = vkey(version)
+    hit = False
+    for r in rngs:
+        events = []
+        for ev in r.get("events", []):
+            (kind, v), = ev.items()
+            ek = (-1,) if v == "0" else vkey(v)
+            if ek is None or k is None:
+                return None
+            events.append((ek, kind))
+        affected = False
+        for ek, kind in sorted(events, key=lambda x: x[0]):
+            if kind == "introduced" and (ek == (-1,) or k >= ek): affected = True
+            elif kind in ("fixed", "limit") and k >= ek: affected = False
+            elif kind == "last_affected" and k > ek: affected = False
+        hit = hit or affected
+    return hit
+
 def known_findings(release, sha256, digests, which=""):
     k, f = known(), []
     if release:
-        for e in k["bad_releases"].get(f"{release[0]}=={release[1]}", []) + k["bad_releases"].get(f"{release[0]}==*", []):
-            where = f" (listed for {e['versions']})" if "versions" in e else ""
-            f.append(finding("high", "known " + e["kind"], f"{which}{release[0]} {release[1]}: {e['id']}{where}: {e['summary']}"))
-    for e in k["bad_files"].get(sha256, []):
-        f.append(finding("high", "known malicious", f"{which}this file is known malicious ({e['id']}): {e['note']}"))
-    for path, d in sorted(digests.items()):
-        for e in k["bad_files"].get(d, []):
-            f.append(finding("high", "known malicious", f"{which}{path} is a known malicious file ({e['id']}): {e['note']}"))
+        name, version = release
+        for e, a in k["by_name"].get(name, []):
+            hit = affects(a, version)
+            if hit is False:
+                continue
+            kind = "malicious" if e["id"].startswith("MAL-") else "vulnerability"
+            maybe = "" if hit else "; its version could not be compared with the advisory's ranges, so it may apply"
+            f.append(finding("high", "known " + kind, f"{which}{name} {version}: {e['id']}{maybe} (algobank/known.json)"))
+    for path, d in [("this file", sha256)] + sorted(digests.items()):
+        for e in k["by_digest"].get(d, []):
+            f.append(finding("high", "known malicious", f"{which}{path} is a known malicious file: {e['id']} (algobank/known.json)"))
     return f
 
 def known_note():
@@ -107,26 +157,6 @@ def with_known(r, *arts):
         r["findings"] = known_findings(a["release"], a["art"].sha256, a["digests"], which) + r["findings"]
     r["coverage"] = r["coverage"] + [known_note()]
     return r
-
-def lookup(sha256):
-    k = known()
-    e = k["reports"].get(sha256)
-    if e and k["analyzer"] != analyzer_root():
-        e, stale = None, "stored reports were made by a different analyzer and are not used"
-    else:
-        stale = None
-    if e:
-        r = dict(e["report"])
-        r["findings"] = known_findings((e["name"], e["version"]), sha256, {}) + r["findings"]
-        r["coverage"] = r["coverage"] + [f"stored report for {e['name']} {e['version']}, made by this analyzer from "
-                                         f"{r['artifact']}; to check it, download the file and run algobank scope",
-                                         "files inside the archive were not checked against known malicious files",
-                                         known_note()]
-        return r
-    f = [finding("high", "unknown", "not in the stored reports for popular packages, so its scope is unknown (TOP): "
-                                    "download the file and run algobank scope")]
-    return dict(artifact=None, sha256=sha256, code_root=None, nodes=0, scope=[TOP], modules={}, dependencies={},
-                findings=known_findings(None, sha256, {}) + f, coverage=[c for c in (stale, known_note()) if c])
 
 def read_members(art):
     """{path: bytes} for regular files, plus notes about anything skipped. Nothing is extracted to disk."""
@@ -376,8 +406,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("diff"); d.add_argument("old"); d.add_argument("new")
     s = sub.add_parser("scope"); s.add_argument("file")
-    l = sub.add_parser("lookup"); l.add_argument("sha256")
-    for x in (d, s, l):
+    for x in (d, s):
         x.add_argument("--json", action="store_true")
         x.add_argument("--ignore-native", action="store_true",
                        help="report native binaries but do not fail on them; check them separately")
@@ -390,10 +419,6 @@ def main(argv=None):
         elif args.cmd == "scope":
             a = analyze(load(args.file))
             r = with_known(scope_report(a), a)
-        else:
-            if not re.fullmatch(r"[0-9a-f]{64}", args.sha256):
-                raise SystemExit("error: expected a SHA-256 digest (64 lowercase hex characters)")
-            r = lookup(args.sha256)
         if args.ignore_native:
             for x in r["findings"]:
                 if x["kind"] == "native": x["ignored"] = True

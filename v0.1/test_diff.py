@@ -129,41 +129,61 @@ def test_no_network_no_writes():
     scope = set(ad.Package(files).scope())
     assert scope <= {"file"}, scope
 
-# ---- known data: tested with a synthetic known.json.gz, never the shipped one
+# ---- known data: tested with a synthetic known.json, never the shipped one
 
-import gzip, hashlib, json
+import hashlib, json
 
-def with_data(tmp, **data):
-    """Point algobank at a known.json.gz built from `data`."""
-    base = dict(date="2026-10-27", analyzer=ad.analyzer_root(), sources=["test"],
-                reports={}, bad_releases={}, bad_files={})
-    base.update(data)
-    path = os.path.join(tmp, "known.json.gz")
-    with gzip.open(path, "wt") as fh: json.dump(base, fh)
+def advisory(id, name, versions=(), ranges=(), files=()):
+    """A record in the OSV format the advisories are published in."""
+    e = dict(id=id, affected=[dict(package=dict(name=name, ecosystem="PyPI"), versions=list(versions),
+                                   ranges=[dict(type="ECOSYSTEM", events=ev) for ev in ranges])])
+    if files:
+        e["database_specific"] = dict(iocs=dict(files=[dict(digests=dict(sha256=d), paths=["x"]) for d in files]))
+    return e
+
+def with_data(tmp, *advisories):
+    path = os.path.join(tmp, "known.json")
+    with open(path, "w") as fh:
+        json.dump(dict(date="2026-10-27", sources=["test"], advisories=list(advisories)), fh)
     ad.DATA, ad._known = path, None
 
 def reset():
-    ad.DATA = os.path.join(os.path.dirname(ad.__file__), "known.json.gz"); ad._known = None
+    ad.DATA = os.path.join(os.path.dirname(ad.__file__), "known.json"); ad._known = None
 
-def test_known_malicious_release():
+def known(tmp, version, *advisories, files=BASE):
+    with_data(tmp, *advisories)
+    a = ad.analyze(ad.load(wheel(tmp, version, files)))
+    return [x for x in ad.with_known(ad.scope_report(a), a)["findings"] if x["kind"].startswith("known")]
+
+def test_known_release_by_version_list():
     with tempfile.TemporaryDirectory() as tmp:
         try:
-            with_data(tmp, bad_releases={"demo==1.1": [dict(id="MAL-0", kind="malicious", summary="stealer")]})
-            a = ad.analyze(ad.load(wheel(tmp, "1.1", BASE)))
-            r = ad.with_known(ad.scope_report(a), a)
-            assert any(x["kind"] == "known malicious" and "MAL-0" in x["text"] for x in high(r))
-            assert any("as of 2026-10-27" in c for c in r["coverage"])
+            r = known(tmp, "1.1", advisory("PYSEC-0", "demo", versions=["1.1"]))
+            assert len(r) == 1 and r[0]["severity"] == "high" and r[0]["kind"] == "known vulnerability"
+            assert "PYSEC-0" in r[0]["text"] and "algobank/known.json" in r[0]["text"]
+            assert not known(tmp, "1.2", advisory("PYSEC-0", "demo", versions=["1.1"]))
         finally: reset()
 
-def test_known_malicious_name_all_versions():
-    """Many malicious-package reports give a range ("every version") instead of a version list."""
+def test_known_release_by_range():
+    """Ranges are evaluated here, with PEP 440 ordering: a secure version must pass every time."""
     with tempfile.TemporaryDirectory() as tmp:
         try:
-            with_data(tmp, bad_releases={"demo==*": [dict(id="MAL-2", kind="malicious", summary="typosquat",
-                                                          versions="all versions")]})
-            a = ad.analyze(ad.load(wheel(tmp, "7.0", BASE)))
-            r = ad.with_known(ad.scope_report(a), a)
-            assert any("MAL-2 (listed for all versions)" in x["text"] for x in high(r))
+            rng = [[{"introduced": "1.2"}, {"fixed": "1.10"}]]
+            for v, hit in [("1.1", False), ("1.2", True), ("1.9", True), ("1.10rc1", True), ("1.10", False), ("1.10.post1", False)]:
+                assert bool(known(tmp, v, advisory("PYSEC-1", "demo", ranges=rng))) == hit, v
+            every = [[{"introduced": "0"}]]                             # most malicious-package reports
+            r = known(tmp, "9.9", advisory("MAL-1", "demo", ranges=every))
+            assert r and r[0]["kind"] == "known malicious"
+            assert known(tmp, "2.0", advisory("MAL-2", "demo"))         # no versions, no ranges: every version
+            assert not known(tmp, "1.3", advisory("PYSEC-2", "demo", ranges=[[{"introduced": "1.0"}, {"last_affected": "1.2"}]]))
+        finally: reset()
+
+def test_known_release_uncomparable_version():
+    """When a version cannot be compared with a range, the advisory may apply, so it is reported."""
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            r = known(tmp, "1.0", advisory("PYSEC-3", "demo", ranges=[[{"introduced": "0"}, {"fixed": "not-a-version"}]]))
+            assert r and "may apply" in r[0]["text"]
         finally: reset()
 
 def test_known_malicious_file_inside_archive():
@@ -171,33 +191,17 @@ def test_known_malicious_file_inside_archive():
     pth = "import cook\n"
     with tempfile.TemporaryDirectory() as tmp:
         try:
-            with_data(tmp, bad_files={hashlib.sha256(pth.encode()).hexdigest(): [dict(id="MAL-1", note="stealer loader")]})
-            a = ad.analyze(ad.load(wheel(tmp, "9.9", dict(BASE, **{"cook.pth": pth}))))
-            r = ad.with_known(ad.scope_report(a), a)
-            assert any(x["kind"] == "known malicious" and "cook.pth" in x["text"] for x in high(r))
+            r = known(tmp, "9.9", advisory("MAL-3", "litellm", files=[hashlib.sha256(pth.encode()).hexdigest()]),
+                      files=dict(BASE, **{"cook.pth": pth}))
+            assert any(x["kind"] == "known malicious" and "cook.pth" in x["text"] for x in r)
         finally: reset()
 
-def test_lookup():
+def test_known_data_date_is_stated():
     with tempfile.TemporaryDirectory() as tmp:
         try:
-            art = ad.load(wheel(tmp, "1.0", BASE))
-            stored = json.loads(json.dumps(ad.scope_report(ad.analyze(art))))     # as it is stored
-            assert stored == ad.scope_report(ad.analyze(art))                      # a stored report is the local report
-            vuln = [dict(id="PYSEC-0", kind="vulnerability", summary="bug")]
-            with_data(tmp, reports={art.sha256: dict(name="demo", version="1.0", report=stored)},
-                      bad_releases={"demo==1.0": vuln})
-            r = ad.lookup(art.sha256)
-            assert r["code_root"] == stored["code_root"]
-            assert any(x["kind"] == "known vulnerability" for x in high(r))
-            assert ad.main(["lookup", art.sha256]) == 1
-            # a report made by another analyzer is not used
-            with_data(tmp, analyzer="0" * 64, reports={art.sha256: dict(name="demo", version="1.0", report=stored)})
-            r = ad.lookup(art.sha256)
-            assert r["code_root"] is None and any("different analyzer" in c for c in r["coverage"])
-            # an unknown hash is TOP
-            r = ad.lookup("1" * 64)
-            assert r["scope"] == ["TOP"] and any(x["kind"] == "unknown" for x in high(r))
-            assert ad.main(["lookup", "not-a-hash"]) == 2
+            with_data(tmp)
+            a = ad.analyze(ad.load(wheel(tmp, "1.0", BASE)))
+            assert any("as of 2026-10-27" in c for c in ad.with_known(ad.scope_report(a), a)["coverage"])
         finally: reset()
 
 if __name__ == "__main__":
