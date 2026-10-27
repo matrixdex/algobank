@@ -14,7 +14,7 @@ h1 {
   font-family: 'Italiana', serif; font-weight: 400; letter-spacing: 0.02em; font-size: 3rem; line-height: 1.25;
   margin: 0 0 24px; padding-bottom: 0.3em; border-bottom: 1px solid rgb(220, 220, 220);
 }
-h3 {
+footer h3 {
   font-family: 'Italiana', serif; font-weight: 400; letter-spacing: 0.02em; font-size: 1.5rem;
   color: white; margin-top: 48px; padding-top: 16px; border-top: 1px solid rgb(220, 220, 220);
 }
@@ -121,4 +121,58 @@ footer nav {
 h1 small {
   display: block; font-size: 1.25rem; line-height: 1.6; letter-spacing: 0.1em; text-transform: uppercase;  /* the subtitle under the title */
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+/* documents rendered from Markdown (Architecture): sections, lists and tables */
+.doc h2 {
+  font-size: 1.5rem; font-weight: 600; line-height: 1.25; margin: 40px 0 16px; padding-bottom: 0.3em;
+  border-bottom: 1px solid rgb(20, 20, 20); color: white;
+}
+.doc h3 {
+  font-size: 1.25rem; font-weight: 600; margin: 32px 0 16px; color: white;
+}
+.doc h4, .doc h5, .doc h6 {
+  font-size: 1rem; font-weight: 600; margin: 24px 0 12px; color: white;
+}
+.doc ul, .doc ol {
+  padding-left: 2em;
+}
+.doc li + li {
+  margin-top: 4px;
+}
+.doc table {
+  display: block; overflow-x: auto; max-width: 100%; border-collapse: collapse; font-size: 16px; overflow-wrap: normal;
+}
+.doc th, .doc td {
+  text-align: left; vertical-align: top; padding: 6px 13px; border: 1px solid rgb(20, 20, 20);
+}
+.doc th {
+  color: white; font-weight: 600;
+}
+/* severities: red high, yellow warning and medium, green low; TOP is red wherever it is a scope */
+.high, code.top {
+  color: #ff4141;
+}
+.warning, .medium {
+  color: #ffd700;
+}
+.low {
+  color: #00ff41;
+}
+.findings .sev {
+  display: flex; align-items: baseline; gap: 16px; margin: 32px 0 8px; padding-bottom: 8px; border-bottom: 1px solid rgb(20, 20, 20);
+}
+.findings .sev:first-child {
+  margin-top: 0;
+}
+.tag {
+  font: 600 1.1rem ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; text-transform: uppercase; letter-spacing: 0.08em;
+}
+.exit {
+  margin-left: auto; font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; color: rgb(220, 220, 220);
+}
+.findings ul {
+  margin: 0; padding-left: 1.25em;
+}
+.findings li {
+  margin: 6px 0;
 }
