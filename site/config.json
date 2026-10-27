@@ -1,12 +1,12 @@
 {
     "dexname": "Algobank",
     "author": "Algobank",
-    "index_template": "<html lang='en'>\n                        <head>\n                            <meta charset='UTF-8'>\n                            <meta name='viewport' content='width=device-width, initial-scale=1.0'>\n                            <link rel='shortcut icon' type='image/x-icon' href='assets/favicon.ico'>\n                            <link rel='stylesheet' href='styles.css'>\n                            <title>{} Dex</title>\n                        </head>\n                        <body>\n                            <br><h1>{} DEX</h1><br>\n                            {}\n                            <br><br><br><br><br><br><br>\n                            <h3><a href='index.html'>{} DEX</a></h3>\n                        </body>\n                        </html>",
-    "page_template": "<html lang='en'>\n                        <head>\n                            <meta charset='UTF-8'>\n                            <meta name='viewport' content='width=device-width, initial-scale=1.0'>\n                            <link rel='shortcut icon' type='image/x-icon' href='assets/favicon.ico'>\n                            <link rel='stylesheet' href='styles.css'>\n                            <title>{} - {} Dex</title>\n                        </head>\n                        <body>\n                        <br>\n                        <h1>{}</h1>\n                        <br>\n                        {}\n                        <br><br><br><br><br><br><br>\n                        <h3><a href='index.html'>{} DEX</a></h3>\n                    </body>\n                    </html>",
+    "index_template": "<html lang='en'>\n<head>\n<meta charset='UTF-8'>\n<meta name='viewport' content='width=device-width, initial-scale=1.0'>\n<link rel='shortcut icon' type='image/x-icon' href='assets/favicon.ico'>\n<link rel='stylesheet' href='styles.css'>\n<title>{0}</title>\n</head>\n<body>\n<h1>{0}</h1>\n<p>Algorithm Bank for composable secure algorithms and software insurance</p>\n<p>Algobank gives every function in a Python package a content hash (a code Merkle tree) and shows what the package can do: use files, the network, processes or the environment, load native code, or run dynamic code it cannot see into (<code>TOP</code>). Algobanking a package means analyzing it this way.</p>\n<nav>{2}</nav>\n</body>\n</html>",
+    "page_template": "<html lang='en'>\n<head>\n<meta charset='UTF-8'>\n<meta name='viewport' content='width=device-width, initial-scale=1.0'>\n<link rel='shortcut icon' type='image/x-icon' href='assets/favicon.ico'>\n<link rel='stylesheet' href='styles.css'>\n<title>{0} - {1}</title>\n</head>\n<body>\n<h1>{0}</h1>\n{3}\n<h3><a href='index.html'>{1}</a></h3>\n</body>\n</html>",
     "page_javascript": "",
     "index_javascript": "",
-    "index_list_type_para": true,
-    "index_list_no_page_link_only": false,
+    "index_list_type_para": false,
+    "index_list_no_page_link_only": true,
     "publish": {
         "method": "git",
         "dest": "https://github.com/matrixdex/algobank",

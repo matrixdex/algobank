@@ -1,14 +1,5 @@
 [
     {
-        "title": "Algobank",
-        "body": [
-            "Algorithm Bank for composable secure algorithms and software insurance",
-            "Algobank gives every function in a Python package a content hash (a code Merkle tree) and shows what the package can do: use files, the network, processes or the environment, load native code, or run dynamic code it cannot see into (<code>TOP</code>). Algobanking a package means analyzing it this way.",
-            "Algobanking is both analysis and storage. Analysis determines whether a version is safe. Storage admits that exact version, by its hash, to the club of versions safe by Algobank standards, until it is deemed insecure. Algobank is the first algobanked code: it has algobanked itself.",
-            "An insecure version only needs to be caught once, and a catch is kept forever. A secure version passes Algobank every time it is checked."
-        ]
-    },
-    {
         "title": "Usage",
         "body": [
             "Algobank has no network access and writes no files. It reads only the wheels you give it. Your package manager downloads them.",
