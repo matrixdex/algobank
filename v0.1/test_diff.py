@@ -116,6 +116,66 @@ def test_no_network_no_writes():
     scope = set(ad.Package(files).scope())
     assert scope <= {"file"}, scope
 
+# ---- known data: tested with a synthetic known.json.gz, never the shipped one
+
+import gzip, hashlib, json
+
+def with_data(tmp, **data):
+    """Point algobank at a known.json.gz built from `data`."""
+    base = dict(date="2026-10-27", analyzer=ad.analyzer_root(), sources=["test"],
+                reports={}, bad_releases={}, bad_files={})
+    base.update(data)
+    path = os.path.join(tmp, "known.json.gz")
+    with gzip.open(path, "wt") as fh: json.dump(base, fh)
+    ad.DATA, ad._known = path, None
+
+def reset():
+    ad.DATA = os.path.join(os.path.dirname(ad.__file__), "known.json.gz"); ad._known = None
+
+def test_known_malicious_release():
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            with_data(tmp, bad_releases={"demo==1.1": [dict(id="MAL-0", kind="malicious", summary="stealer")]})
+            a = ad.analyze(ad.load(wheel(tmp, "1.1", BASE)))
+            r = ad.with_known(ad.scope_report(a), a)
+            assert any(x["kind"] == "known malicious" and "MAL-0" in x["text"] for x in high(r))
+            assert any("as of 2026-10-27" in c for c in r["coverage"])
+        finally: reset()
+
+def test_known_malicious_file_inside_archive():
+    """litellm 1.107.0: the .pth file's digest is published, so a repackaged copy is caught too."""
+    pth = "import cook\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            with_data(tmp, bad_files={hashlib.sha256(pth.encode()).hexdigest(): [dict(id="MAL-1", note="stealer loader")]})
+            a = ad.analyze(ad.load(wheel(tmp, "9.9", dict(BASE, **{"cook.pth": pth}))))
+            r = ad.with_known(ad.scope_report(a), a)
+            assert any(x["kind"] == "known malicious" and "cook.pth" in x["text"] for x in high(r))
+        finally: reset()
+
+def test_lookup():
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            art = ad.load(wheel(tmp, "1.0", BASE))
+            stored = json.loads(json.dumps(ad.scope_report(ad.analyze(art))))     # as it is stored
+            assert stored == ad.scope_report(ad.analyze(art))                      # a stored report is the local report
+            vuln = [dict(id="PYSEC-0", kind="vulnerability", summary="bug")]
+            with_data(tmp, reports={art.sha256: dict(name="demo", version="1.0", report=stored)},
+                      bad_releases={"demo==1.0": vuln})
+            r = ad.lookup(art.sha256)
+            assert r["code_root"] == stored["code_root"]
+            assert any(x["kind"] == "known vulnerability" for x in high(r))
+            assert ad.main(["lookup", art.sha256]) == 1
+            # a report made by another analyzer is not used
+            with_data(tmp, analyzer="0" * 64, reports={art.sha256: dict(name="demo", version="1.0", report=stored)})
+            r = ad.lookup(art.sha256)
+            assert r["code_root"] is None and any("different analyzer" in c for c in r["coverage"])
+            # an unknown hash is TOP
+            r = ad.lookup("1" * 64)
+            assert r["scope"] == ["TOP"] and any(x["kind"] == "unknown" for x in high(r))
+            assert ad.main(["lookup", "not-a-hash"]) == 2
+        finally: reset()
+
 if __name__ == "__main__":
     import contextlib, io
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

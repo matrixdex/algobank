@@ -3,6 +3,7 @@
 Usage:
   algobank diff OLD NEW [--json]
   algobank scope FILE [--json]
+  algobank lookup SHA256 [--json]
 
 OLD, NEW and FILE are paths to wheel or sdist files, for example from
   pip download --only-binary :all: -d wheels/ NAME==VERSION
@@ -10,9 +11,13 @@ OLD, NEW and FILE are paths to wheel or sdist files, for example from
 Algobank reads the files you give it, in memory. It has no network access and writes no files.
 Nothing from the package is installed, imported or run.
 
+Every result is checked against the known-bad data shipped in this package: malicious releases,
+releases with known vulnerabilities, and known malicious files. lookup gives the stored report of a
+popular package's file by its SHA-256, for when you have a hash (from a lockfile) but not the file.
+
 Exit status: 0 no high-severity findings, 1 high-severity findings, 2 error.
 """
-import argparse, ast, hashlib, io, json, os, re, sys, tarfile, zipfile
+import argparse, ast, gzip, hashlib, io, json, os, re, sys, tarfile, zipfile
 
 from .pkgmerkle import Package, TOP
 
@@ -36,11 +41,86 @@ class Artifact:
         self.sha256 = hashlib.sha256(data).hexdigest()
 
 def load(path):
-    """The only place Algobank touches the file system: it reads the one file it is given."""
+    """Reads the one file it is given. Algobank reads no other files except its own package (known())."""
     if not os.path.isfile(path):
         raise SystemExit(f"error: file not found: {path}")
     with open(path, "rb") as fh:
         return Artifact(os.path.basename(path), fh.read())
+
+# ---- known data ---------------------------------------------------------------
+# Shipped in this package, built by v0.1/build_cache.py. Known-bad entries are only ever added.
+# A report is facts about one file, never a verdict that the file is safe.
+
+DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "known.json.gz")
+_known = None
+
+def known():
+    global _known
+    if _known is None:
+        _known = dict(date=None, analyzer=None, sources=[], reports={}, bad_releases={}, bad_files={})
+        if os.path.isfile(DATA):
+            with gzip.open(DATA, "rt", encoding="utf-8") as fh:
+                _known = json.load(fh)
+    return _known
+
+def analyzer_root():
+    """Code root of this analyzer. A stored report is valid only for the analyzer that produced it."""
+    here, files = os.path.dirname(os.path.abspath(__file__)), {}
+    for f in sorted(os.listdir(here)):
+        if f.endswith(".py"):
+            with open(os.path.join(here, f), encoding="utf-8") as fh:
+                files["algobank/" + f] = fh.read()
+    return Package(files).root()
+
+def norm(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+def known_findings(release, sha256, digests, which=""):
+    k, f = known(), []
+    if release:
+        for e in k["bad_releases"].get(f"{release[0]}=={release[1]}", []):
+            f.append(finding("high", "known " + e["kind"], f"{which}{release[0]} {release[1]}: {e['id']}: {e['summary']}"))
+    for e in k["bad_files"].get(sha256, []):
+        f.append(finding("high", "known malicious", f"{which}this file is known malicious ({e['id']}): {e['note']}"))
+    for path, d in sorted(digests.items()):
+        for e in k["bad_files"].get(d, []):
+            f.append(finding("high", "known malicious", f"{which}{path} is a known malicious file ({e['id']}): {e['note']}"))
+    return f
+
+def known_note():
+    k = known()
+    if not k["date"]:
+        return "no known-bad data is shipped with this copy of algobank"
+    return (f"known-bad data as of {k['date']} ({'; '.join(k['sources'])}); "
+            "anything reported after that date is not included: update algobank")
+
+def with_known(r, *arts):
+    """Add known-bad findings to a report. Kept apart from the report itself, which is pure analysis."""
+    labels = ("old: ", "new: ") if len(arts) == 2 else ("",)
+    for a, which in zip(arts, labels):
+        r["findings"] = known_findings(a["release"], a["art"].sha256, a["digests"], which) + r["findings"]
+    r["coverage"] = r["coverage"] + [known_note()]
+    return r
+
+def lookup(sha256):
+    k = known()
+    e = k["reports"].get(sha256)
+    if e and k["analyzer"] != analyzer_root():
+        e, stale = None, "stored reports were made by a different analyzer and are not used"
+    else:
+        stale = None
+    if e:
+        r = dict(e["report"])
+        r["findings"] = known_findings((e["name"], e["version"]), sha256, {}) + r["findings"]
+        r["coverage"] = r["coverage"] + [f"stored report for {e['name']} {e['version']}, made by this analyzer from "
+                                         f"{r['artifact']}; to check it, download the file and run algobank scope",
+                                         "files inside the archive were not checked against known malicious files",
+                                         known_note()]
+        return r
+    f = [finding("high", "unknown", "not in the stored reports for popular packages, so its scope is unknown (TOP): "
+                                    "download the file and run algobank scope")]
+    return dict(artifact=None, sha256=sha256, code_root=None, nodes=0, scope=[TOP], modules={}, dependencies={},
+                findings=known_findings(None, sha256, {}) + f, coverage=[c for c in (stale, known_note()) if c])
 
 def read_members(art):
     """{path: bytes} for regular files, plus notes about anything skipped. Nothing is extracted to disk."""
@@ -77,6 +157,12 @@ def requires(members):
         spec = re.sub(r"\s+", " ", spec).strip()
         deps[m.group(1).lower().replace("-", "_")] = spec or "any version"
     return deps
+
+def release(members):
+    meta = next((v for k, v in members.items() if k.endswith((".dist-info/METADATA", "PKG-INFO"))), b"")
+    text = meta.decode("utf-8", "replace")
+    name, version = re.search(r"^Name:[ \t]*(\S+)", text, re.M), re.search(r"^Version:[ \t]*(\S+)", text, re.M)
+    return (norm(name.group(1)), version.group(1)) if name and version else None
 
 def hooks(members):
     """Code that runs without the package being imported."""
@@ -117,11 +203,13 @@ def analyze(art):
     pins = dict(deps)
     if "beautifulsoup4" in pins: pins["bs4"] = pins["beautifulsoup4"]
     pkg = Package(sources, pins)
-    natives = {p: hashlib.sha256(d).hexdigest() for p, d in members.items() if p.endswith(NATIVE_EXT)}
-    other = {p: hashlib.sha256(d).hexdigest() for p, d in members.items()
+    digests = {p: hashlib.sha256(d).hexdigest() for p, d in members.items()}
+    natives = {p: d for p, d in digests.items() if p.endswith(NATIVE_EXT)}
+    other = {p: d for p, d in digests.items()
              if not p.endswith(".py") and p not in natives and ".dist-info/" not in p}
     return dict(art=art, pkg=pkg, deps=deps, hooks=hooks(members), entry_points=entry_points(members),
-                natives=natives, other=other, unparsed=unparsed, notes=notes, is_wheel=is_wheel)
+                natives=natives, other=other, unparsed=unparsed, notes=notes, is_wheel=is_wheel,
+                digests=digests, release=release(members))
 
 # ---- reporting ----------------------------------------------------------------
 
@@ -262,7 +350,7 @@ def print_diff(r):
     for c in r["coverage"]: print(f"  note: {c}")
 
 def print_scope(r):
-    print(f"{r['artifact']}  ({r['nodes']} nodes)")
+    print(f"{r['artifact'] or r['sha256']}  ({r['nodes']} nodes)")
     print(f"  scope: {', '.join(r['scope']) or 'none'}")
     for m, s in r["modules"].items():
         if s: print(f"    {m}: {', '.join(s)}")
@@ -277,15 +365,23 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("diff"); d.add_argument("old"); d.add_argument("new")
     s = sub.add_parser("scope"); s.add_argument("file")
-    for x in (d, s): x.add_argument("--json", action="store_true")
+    l = sub.add_parser("lookup"); l.add_argument("sha256")
+    for x in (d, s, l): x.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
     sys.setrecursionlimit(20000)
     try:
         if args.cmd == "diff":
-            r = diff_report(analyze(load(args.old)), analyze(load(args.new)))
+            a, b = analyze(load(args.old)), analyze(load(args.new))
+            r = with_known(diff_report(a, b), a, b)
             print(json.dumps(r, indent=2)) if args.json else print_diff(r)
+        elif args.cmd == "scope":
+            a = analyze(load(args.file))
+            r = with_known(scope_report(a), a)
+            print(json.dumps(r, indent=2)) if args.json else print_scope(r)
         else:
-            r = scope_report(analyze(load(args.file)))
+            if not re.fullmatch(r"[0-9a-f]{64}", args.sha256):
+                raise SystemExit("error: expected a SHA-256 digest (64 lowercase hex characters)")
+            r = lookup(args.sha256)
             print(json.dumps(r, indent=2)) if args.json else print_scope(r)
     except SystemExit as e:
         if isinstance(e.code, str):

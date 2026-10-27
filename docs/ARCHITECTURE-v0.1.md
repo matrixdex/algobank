@@ -434,6 +434,8 @@ Example admission entry (digests shortened):
 | `pyproject.toml` | Package metadata for PyPI. The build backend is `flit_core`, which has no dependencies. The wheel contains only `algobank/`. |
 | `algobank/diff.py` | Diff tool and `algobank` command: compares two versions of a package and reports new scope, dynamic code, hooks, binaries and dependencies (section 10.6). |
 | `v0.1/test_diff.py` | Tests for the diff tool on synthetic wheels that reproduce real attack patterns. |
+| `v0.1/build_cache.py` | Builds `algobank/known.json.gz` (section 10.6, known data). Not shipped; it is the only part of Algobank that uses the network. |
+| `algobank/known.json.gz` | Known-bad releases and files, and stored reports for popular packages, shipped inside the package. |
 | `v0.1/proofs/CodeRoot.v` | Coq proof of the code root computation (section 10.4). |
 | `v0.1/proofs/MerkleSound.v` | Coq proof of Merkle soundness (section 10.5). |
 | `v0.1/proofs/check_model.py`, `Extract.v`, `driver.ml` | Check that the proven model computes the same root as `pkgmerkle.py`. |
@@ -547,6 +549,7 @@ The diff tool, run as the `algobank` command, is the first product built on the 
 ```
 algobank diff OLD NEW [--json]
 algobank scope FILE [--json]
+algobank lookup SHA256 [--json]
 ```
 
 `OLD`, `NEW` and `FILE` are paths to wheel or sdist files. The tool reads each file in memory. Nothing from the package is installed, imported or run.
@@ -576,6 +579,21 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 | Source distribution: building it runs the build backend and any `setup.py` (`TOP`) | high, in `scope` and `diff` |
 
 Exit status is 1 when any finding is high, 0 otherwise, and 2 on error, so the tool can gate a CI job. `--json` gives the same report for programs and agents. The report also states what it could not see: unparsed files and native binaries.
+
+**Known data.** Each release of Algobank ships `known.json.gz` inside the package, built by `v0.1/build_cache.py`. It holds known-bad data and stored reports, and needs no network at run time: it arrives through the package manager, like any package.
+
+| Part | Contents | Used by |
+|---|---|---|
+| Known-bad releases | Every `name==version` with a malicious-package report (OpenSSF `ossf/malicious-packages`, `MAL-` entries) or a known vulnerability (PyPA `pypa/advisory-database`, `PYSEC-` entries) | `scope`, `diff` and `lookup`: a high finding |
+| Known malicious files | SHA-256 digests of malicious files published with those reports, such as the `.pth` and `sitecustomize.py` files of litellm 1.107.0 | `scope` and `diff` check every file inside the archive, so a repackaged copy is caught too |
+| Stored reports | The scope report of every file of the latest release of the most downloaded packages, keyed by the file's SHA-256 | `lookup` only |
+
+Rules:
+
+1. **A known-bad entry outranks everything.** It is a high finding whatever the analysis or a stored report says. Entries are only added, never removed: a release that was malicious stays reported. An advisory that reaches Algobank under two identifiers (a `MAL-` entry and its `PYSEC-` alias) is reported once.
+2. **A stored report is facts, not a verdict.** It is exactly the report `algobank scope` produces for that file, with the same analyzer and Python version. It never says a file is safe, and it records the code root of the analyzer that made it; if that differs from the running analyzer, the stored reports are not used.
+3. **Given a file, Algobank always analyzes it.** A stored report would only save computation (principle 7), so it is used only by `lookup`, when there is a hash but no file, for example from a lockfile. A hash with no stored report is a high finding with scope `TOP`.
+4. **Staleness is stated.** Every result says the date of the known-bad data and its sources. Anything reported after that date is missing until Algobank is updated, so the release cadence of Algobank is the update cadence of the known-bad data.
 
 **Validation.**
 
@@ -671,7 +689,7 @@ python3.14 -I v0.1/proofs/check_model.py
 7. Implement the admission gates as code.
 8. Run the release-history test on larger packages with many contributors.
 9. Evaluate the component tier for pure-Python parts with `componentize-py`.
-10. Take the diff tool to users: a GitHub Action that comments on pull requests changing `requirements.txt`, `uv.lock` or `poetry.lock`; a shared cache of reports for popular packages, keyed by artifact hash and shipped as package data, so lookups need no network; and an MCP server for coding agents that takes file paths and, like the command, has no network access and writes no files. Both are required before the diff tool ships to agents, and the MCP server must be algobanked, with its whole dependency closure, before it ships. Measure how often a finding leads to a change in a dependency or in the code.
+10. Take the diff tool to users: a GitHub Action that comments on pull requests changing `requirements.txt`, `uv.lock` or `poetry.lock`; stored reports for more popular packages and more releases (section 10.6, known data); and an MCP server for coding agents that takes file paths and, like the command, has no network access and writes no files. Both are required before the diff tool ships to agents, and the MCP server must be algobanked, with its whole dependency closure, before it ships. Measure how often a finding leads to a change in a dependency or in the code.
 11. Continue proving the core on the front end, back end and checker split (section 3.8):
     1. Roll-up soundness and `TOP` propagation, with the matching conditions added to the checker.
     2. Reuse soundness: a result accepted for a hash stays valid wherever that hash appears.

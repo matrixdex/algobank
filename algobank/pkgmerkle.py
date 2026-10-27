@@ -317,8 +317,9 @@ class Package:
     # ---- analysis ----------------------------------------------------------
     def _analyze(self):
         raw = {}
+        mod_names = {mod: self._bind_imports(mod, tree) for mod, (path, tree) in self.trees.items()}
         for mod, (path, tree) in self.trees.items():
-            names_mod = self._bind_imports(mod, tree)
+            names_mod = mod_names[mod]
             skel = copy.deepcopy(tree)
             class Drop(ast.NodeTransformer):
                 def visit_FunctionDef(self, n): return None
@@ -344,7 +345,7 @@ class Package:
                                              edges=e | rd, calls=set(), caps=set(), flags=set(), ext=er,
                                              stats=st)
         for nid, (fn, mod, cls) in self.funcs.items():
-            names = dict(self._bind_imports(mod, self.trees[mod][1]))
+            names = dict(mod_names[mod])
             names.update(self._bind_imports(mod, fn))
             declared_global = {g for n in ast.walk(fn) if isinstance(n, ast.Global) for g in n.names}
             local = set(local_map(fn)) - declared_global
