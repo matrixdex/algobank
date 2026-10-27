@@ -5,6 +5,42 @@
 <link rel='shortcut icon' type='image/x-icon' href='assets/favicon.ico'>
 <link rel='stylesheet' href='styles.css'>
 <title>Usage - algobank</title>
+<script>
+// KNOWN EXPLOITS AND VULNERABILITIES: search, details on narrow screens, exports (acts only on that page)
+document.addEventListener("DOMContentLoaded", () => {
+  const q = document.getElementById("q"), msg = document.getElementById("msg"), data = document.getElementById("known.jsonl");
+  if (!q || !data) return;
+  const phone = matchMedia("(max-width: 600px)"), full = q.placeholder;
+  const placeholder = () => q.placeholder = phone.matches ? q.dataset.phone : full;
+  placeholder(); phone.addEventListener("change", placeholder);
+  const entries = [...document.querySelectorAll("table.known tbody")];
+  function search() {
+    const term = (q.value.trim().split(/\s+|==/)[0] || "").toLowerCase().replace(/[-_.]+/g, "-");
+    entries.forEach(t => t.hidden = term && !t.dataset.search.replace(/[-_.]+/g, "-").includes(term));
+    document.querySelectorAll("table.known").forEach(t => t.hidden = term && !t.querySelector("tbody:not([hidden])"));
+    msg.textContent = term && entries.every(t => t.hidden) ? `${q.value.trim()}: no known exploits or vulnerabilities` : "";
+    history.replaceState(null, "", term ? "?q=" + encodeURIComponent(q.value.trim()) : location.pathname);
+  }
+  q.value = new URLSearchParams(location.search).get("q") || "";
+  q.addEventListener("input", search); search();
+  document.querySelectorAll("table.known tr.entry").forEach(tr => {
+    const toggle = () => { const d = tr.nextElementSibling; d.hidden = !d.hidden; tr.setAttribute("aria-expanded", !d.hidden); };
+    tr.addEventListener("click", toggle);
+    tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+  });
+  const jsonl = data.textContent.trim() + "\n";
+  function csv() {
+    const rows = jsonl.trim().split("\n").map(l => JSON.parse(l)), cols = [...new Set(rows.flatMap(Object.keys))];
+    const quote = x => { const s = Array.isArray(x) ? x.join(", ") : String(x ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    return [cols, ...rows.map(r => cols.map(c => r[c]))].map(r => r.map(quote).join(",")).join("\n") + "\n";
+  }
+  document.querySelectorAll("[data-export]").forEach(b => b.addEventListener("click", () => {
+    const type = b.dataset.export, a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([type === "csv" ? csv() : jsonl], { type: type === "csv" ? "text/csv" : "application/x-ndjson" }));
+    a.download = "known." + type; a.click(); URL.revokeObjectURL(a.href);
+  }));
+});
+</script>
 </head>
 <body>
 <h1>Usage</h1>
