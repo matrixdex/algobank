@@ -30,16 +30,17 @@
     {
         "title": "Known Exploits and Vulnerabilities",
         "body": [
-            "Algobank ships the published advisories for the 1,000 most downloaded PyPI packages: malicious releases from OpenSSF (<code>MAL-</code>) and known vulnerabilities from PyPA (<code>PYSEC-</code>), unchanged, in <a href='https://raw.githubusercontent.com/matrixdex/algobank/refs/heads/main/algobank/known.json'>known.json</a>.",
+            "Algobank ships the published advisories for the 1,000 most downloaded PyPI packages: malicious releases from OpenSSF (<code>MAL-</code>) and known vulnerabilities from PyPA (<code>PYSEC-</code>), unchanged, in <a href='https://github.com/matrixdex/algobank/blob/live/known.json'>known.json</a>.",
             "Algobank's own code decides on your machine whether a record applies: a listed version, or a version inside a range, compared by PEP 440 ordering. A match is a high finding that names the advisory.",
-            "Data as of 2026-10-27: 1,372 advisories. Update Algobank to get newer ones."
+            "Data as of 2026-10-27: 1,372 advisories. The newest copy is on the <a href='https://github.com/matrixdex/algobank/blob/live/known.json'>live</a> branch; each release of Algobank ships the copy of its day."
         ]
     },
     {
         "title": "Bank",
         "body": [
             "Algobanked versions, by hash. A version stays admitted until it is deemed insecure.",
-            "<code>algobank</code> 0.1.0: code root <code>84dd6f259681292a8c1b7a5934ba31f9f40dbea27c406cdd9adb128507c8e47e</code>, scope <code>file</code>, 108 nodes. Algobank reads only the files it is given and its own <code>known.json</code>."
+            "<code>algobank</code> 0.1.0: code root <code>84dd6f259681292a8c1b7a5934ba31f9f40dbea27c406cdd9adb128507c8e47e</code>, scope <code>file</code>, 108 nodes. Algobank reads only the files it is given and its own <code>known.json</code>.",
+            "The bank is <a href='https://github.com/matrixdex/algobank/blob/live/bank.jsonl'>bank.jsonl</a> on the live branch: one admitted version per line, append-only. These are records, not verdicts to trust: run <code>algobank scope</code> on any version yourself."
         ]
     },
     {
@@ -59,7 +60,7 @@
     {
         "title": "Source",
         "body": [
-            "<a href='https://github.com/matrixdex/algobank'>github.com/matrixdex/algobank</a>: the library on <code>main</code>, this website on <code>web</code>.",
+            "<a href='https://github.com/matrixdex/algobank'>github.com/matrixdex/algobank</a>: the library on <code>main</code>, this website on <code>web</code>, the live data on <code>live</code>.",
             "<a href='https://github.com/matrixdex/algobank/issues'>Issues</a>"
         ]
     }
