@@ -73,6 +73,8 @@ def known():
                 data = json.load(fh)
         by_name, by_digest = {}, {}
         for e in data["advisories"]:
+            if e.get("withdrawn"):                             # retracted by its publisher: kept in the file, never matched
+                continue
             for a in e.get("affected", []):
                 if a.get("package", {}).get("ecosystem") == "PyPI":
                     by_name.setdefault(norm(a["package"]["name"]), []).append((e, a))

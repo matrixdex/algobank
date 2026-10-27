@@ -602,9 +602,10 @@ Exit status is 1 when any finding is high, 0 otherwise, and 2 on error, so the t
 Rules:
 
 1. **Records are data; the code decides.** The records are shipped exactly as published, and `algobank/diff.py` decides on the user's machine whether one applies: a version listed in the record, or a version inside one of its ranges, compared by PEP 440 ordering. A codegen can read both the records and the code. Nothing interpreted elsewhere is trusted.
-2. **A match is a high finding** that names the advisory identifier and points to `known.json`, whatever the analysis says. When a version cannot be compared with a range, the advisory may apply, so it is reported. Every file inside the archive is checked against the published malicious-file digests, so a repackaged copy is caught too. An advisory published under two identifiers (a `MAL-` record and its `PYSEC-` alias) is shipped once.
-3. **Catches are kept; passes are never stored** (principle 9). Records are only added, never removed. No report or verdict about any package is shipped: every file is analyzed every time it is checked.
-4. **Staleness is stated.** Every result gives the date of the data and its sources. Anything reported after that date is missing until Algobank is updated, so Algobank's release cadence is the update cadence of the known data.
+2. **A withdrawn advisory is never matched.** Its publisher retracted it, so the versions it named must pass; the record stays in `known.json`, since records are only ever added.
+3. **A match is a high finding** that names the advisory identifier and points to `known.json`, whatever the analysis says. When a version cannot be compared with a range, the advisory may apply, so it is reported. Every file inside the archive is checked against the published malicious-file digests, so a repackaged copy is caught too. An advisory published under two identifiers (a `MAL-` record and its `PYSEC-` alias) is shipped once.
+4. **Catches are kept; passes are never stored** (principle 9). Records are only added, never removed. No report or verdict about any package is shipped: every file is analyzed every time it is checked.
+5. **Staleness is stated.** Every result gives the date of the data and its sources. Anything reported after that date is missing until Algobank is updated, so Algobank's release cadence is the update cadence of the known data.
 
 **Validation.**
 

@@ -199,6 +199,15 @@ def test_known_release_by_range():
             assert not known(tmp, "1.3", advisory("PYSEC-2", "demo", ranges=[[{"introduced": "1.0"}, {"last_affected": "1.2"}]]))
         finally: reset()
 
+def test_withdrawn_advisory_is_not_matched():
+    """A withdrawn advisory was retracted by its publisher: the version it named passes."""
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            gone = dict(advisory("PYSEC-4", "demo", versions=["1.1"]), withdrawn="2026-10-01T00:00:00Z")
+            assert not known(tmp, "1.1", gone)
+            assert known(tmp, "1.1", advisory("PYSEC-5", "demo", versions=["1.1"]))
+        finally: reset()
+
 def test_known_release_uncomparable_version():
     """When a version cannot be compared with a range, the advisory may apply, so it is reported."""
     with tempfile.TemporaryDirectory() as tmp:
