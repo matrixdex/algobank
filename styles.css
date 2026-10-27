@@ -62,7 +62,7 @@ img {
   outline: none; border-color: #00ff41;
 }
 #msg:not(:empty) {
-  margin: 8px 0 16px; font-family: monospace; color: white;
+  margin: 8px 0 16px; font-family: monospace; color: #ff4141;  /* "... not algobanked" is red */
 }
 .scroll {
   overflow-x: auto; max-width: 100%; margin: 16px 0;
