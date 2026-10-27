@@ -99,3 +99,25 @@ h1, #q::placeholder {
 footer nav {
   text-align: right;  /* the page links; the algobank link above them stays left */
 }
+/* wide screens: the footer is one row, algobank and then the page links */
+@media screen and (min-width: 940px) {  /* the row fits from 940 pixels; narrower screens stack it */
+  footer {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 24px;
+    margin-top: 48px; padding-top: 16px; border-top: 1px solid rgb(220, 220, 220);
+  }
+  footer h3 {
+    margin: 0; padding: 0; border: none;
+  }
+  footer nav {
+    display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 24px;
+  }
+  footer .indexlink {
+    padding: 0;
+  }
+  footer .indexlink br {
+    display: none;
+  }
+}
+h1 small {
+  display: block; font-size: 1.5rem; line-height: 1.4;  /* the subtitle under the title */
+}
