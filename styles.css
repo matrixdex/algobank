@@ -79,12 +79,6 @@ img {
 #bank td.pkg {
   overflow-wrap: anywhere;
 }
-#bank tr.entry {
-  cursor: pointer;
-}
-#bank tr.entry:hover, #bank tr.entry[aria-expanded=true] {
-  background-color: rgb(20, 20, 20);
-}
 #bank tr.entry:focus-visible {
   outline: 1px solid #00ff41;
 }
@@ -106,10 +100,40 @@ img {
 button.copy {
   font-size: 12px; padding: 1px 8px; margin: 0 0 0 8px; border-radius: 0;
 }
-@media screen and (max-width: 600px) {  /* phones: package and findings only; the scope is in the details */
-  #bank .scope {
+/* wide screens: every field in its own column, no details; narrow screens: package and findings, details on click */
+#bank .narrow, #bank tr.details {
+  display: none;
+}
+#bank tr.entry {
+  cursor: default;
+}
+#bank tr.entry:hover, #bank tr.entry[aria-expanded=true] {
+  background-color: transparent;
+}
+#bank td.wide, #bank th.wide {
+  white-space: nowrap;
+}
+@media screen and (max-width: 1044px) {  /* the full table is 981px: it fits from 1045px */
+  #bank .wide {
     display: none;
   }
+  #bank td.narrow, #bank th.narrow {
+    display: table-cell;
+  }
+  #bank span.narrow {
+    display: inline;
+  }
+  #bank tr.details:not([hidden]) {
+    display: table-row;
+  }
+  #bank tr.entry {
+    cursor: pointer;
+  }
+  #bank tr.entry:hover, #bank tr.entry[aria-expanded=true] {
+    background-color: rgb(20, 20, 20);
+  }
+}
+@media screen and (max-width: 600px) {
   #bank dl {
     grid-template-columns: 1fr; gap: 0 0; padding: 8px 4px;
   }
