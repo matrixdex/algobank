@@ -54,7 +54,7 @@ Banking and insurance (vouches, deposits, penalties, interest, payouts) sit on t
 | Term | Meaning |
 |---|---|
 | **Package** | A set of source files analyzed together. One package has one code Merkle tree. |
-| **Algobanking** | Analyzing a package with Algobank: computing its code Merkle tree and scope, and checking the result. An algobanked package has been analyzed this way. |
+| **Algobanking** | Running Algobank on code, computing its code Merkle tree and scope and checking the result, and saving the report in Algobank, keyed by the code's hash. An algobanked package has been analyzed and its report stored. Findings do not block algobanking; they are part of the stored report. |
 | **Codegen** | An AI coding agent. |
 | **Part** | A package admitted to the garden. The unit that is confined and run. |
 | **Node** | A function or method (`module:qualname`), a module's top-level code (`module:<module>`), or a module value (`module:=name`). |
@@ -572,11 +572,13 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 | Package can now use `network`, `process`, `env`, `native` or `TOP`, which it could not before | high |
 | Such a scope newly reachable from existing code, named with where it enters | high |
 | New `eval`, `exec`, deserialization, or run-time changes to another module | high |
-| New native binary (not analyzed) | high |
+| Native binary, new or changed in `diff`, any in `scope`: "native binary detected. not checked" | high; with `--ignore-native`, still reported but marked ignored and left out of the exit status |
 | New dependency, including test-only and optional ones: its code is not analyzed here, so its scope is unknown (`TOP`) | high |
-| New `file` scope, other new dynamic code (computed imports and attributes, `__getattr__`, `import *`), changed native binary, new entry point or installed script | medium |
+| New `file` scope, other new dynamic code (computed imports and attributes, `__getattr__`, `import *`), new entry point or installed script | medium |
 | Changed dependency range, new or changed data files | low |
 | Source distribution: building it runs the build backend and any `setup.py` (`TOP`) | high, in `scope` and `diff` |
+
+**Native binaries.** Algobank analyzes Python source and cannot see what compiled code does. A wheel with binaries gets `native` in its scope and the high finding "native binary detected. not checked", naming each binary; the binaries are recorded by hash. They need checking by other means, such as a reproducible build from source or a native-code result (section 6). This does not stop the package from being algobanked: its report is stored with the binaries flagged. `--ignore-native` keeps the finding in the report, marked ignored, and lets the run pass, for when the binaries are checked separately.
 
 Exit status is 1 when any finding is high, 0 otherwise, and 2 on error, so the tool can gate a CI job. `--json` gives the same report for programs and agents. The report also states what it could not see: unparsed files and native binaries.
 
@@ -584,7 +586,7 @@ Exit status is 1 when any finding is high, 0 otherwise, and 2 on error, so the t
 
 | Part | Contents | Used by |
 |---|---|---|
-| Known-bad releases | Every `name==version` with a malicious-package report (OpenSSF `ossf/malicious-packages`, `MAL-` entries) or a known vulnerability (PyPA `pypa/advisory-database`, `PYSEC-` entries) | `scope`, `diff` and `lookup`: a high finding |
+| Known-bad releases | Every `name==version` with a malicious-package report (OpenSSF `ossf/malicious-packages`, `MAL-` entries) or a known vulnerability (PyPA `pypa/advisory-database`, `PYSEC-` entries). An advisory that gives a version range instead of a version list is listed for every version of the name, with the range in the finding, so it is never dropped | `scope`, `diff` and `lookup`: a high finding |
 | Known malicious files | SHA-256 digests of malicious files published with those reports, such as the `.pth` and `sitecustomize.py` files of litellm 1.107.0 | `scope` and `diff` check every file inside the archive, so a repackaged copy is caught too |
 | Stored reports | The scope report of every file of the latest release of the most downloaded packages, keyed by the file's SHA-256 | `lookup` only |
 

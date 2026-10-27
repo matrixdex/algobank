@@ -15,6 +15,10 @@ Every result is checked against the known-bad data shipped in this package: mali
 releases with known vulnerabilities, and known malicious files. lookup gives the stored report of a
 popular package's file by its SHA-256, for when you have a hash (from a lockfile) but not the file.
 
+Native binaries (.so, .pyd, .dylib, .dll) are not checked: each is a high finding, "native binary
+detected. not checked", to be checked separately. With --ignore-native they are still reported, marked
+ignored, and do not affect the exit status, so a package with native code can still be algobanked.
+
 Exit status: 0 no high-severity findings, 1 high-severity findings, 2 error.
 """
 import argparse, ast, gzip, hashlib, io, json, os, re, sys, tarfile, zipfile
@@ -28,6 +32,7 @@ SDIST_TEXT = ("source distribution: installing it runs its build backend and any
               "here (TOP); pip runs that code to read the metadata even during pip download, so download "
               "with --only-binary :all:")
 NATIVE_EXT = (".so", ".pyd", ".dylib", ".dll")
+NATIVE_TEXT = "native binary detected. not checked"
 DYN_FLAGS = {"dyn-import", "dyn-attr", "dyn-exec", "dyn-patch", "dyn-getattr-def", "star-import"}
 FLAG_TEXT = {"dyn-import": "import with a computed name", "dyn-attr": "attribute access with a computed name",
              "dyn-exec": "eval, exec or deserialization", "dyn-patch": "changes another module at run time",
@@ -78,8 +83,9 @@ def norm(name):
 def known_findings(release, sha256, digests, which=""):
     k, f = known(), []
     if release:
-        for e in k["bad_releases"].get(f"{release[0]}=={release[1]}", []):
-            f.append(finding("high", "known " + e["kind"], f"{which}{release[0]} {release[1]}: {e['id']}: {e['summary']}"))
+        for e in k["bad_releases"].get(f"{release[0]}=={release[1]}", []) + k["bad_releases"].get(f"{release[0]}==*", []):
+            where = f" (listed for {e['versions']})" if "versions" in e else ""
+            f.append(finding("high", "known " + e["kind"], f"{which}{release[0]} {release[1]}: {e['id']}{where}: {e['summary']}"))
     for e in k["bad_files"].get(sha256, []):
         f.append(finding("high", "known malicious", f"{which}this file is known malicious ({e['id']}): {e['note']}"))
     for path, d in sorted(digests.items()):
@@ -222,6 +228,10 @@ def module_scopes(pkg):
         if TOP in n["caps"] and n["direct_flags"] & DYN_FLAGS: out[module_of(nid)].add(TOP)
     return {m: sorted(s) for m, s in sorted(out.items())}
 
+def scope_of(a):
+    """The package's scope, with `native` when it ships binaries Algobank cannot see into."""
+    return sorted(set(a["pkg"].scope()) | ({"native"} if a["natives"] else set()))
+
 def finding(sev, kind, text, nodes=()):
     nodes = list(nodes)
     return dict(severity=sev, kind=kind, text=text, nodes=nodes[:10], more=max(0, len(nodes) - 10))
@@ -241,15 +251,15 @@ def scope_report(a):
         users = [k for k, n in pkg.nodes.items() if flag in n["direct_flags"]]
         if users: f.append(finding("info", "dynamic", FLAG_TEXT[flag], users))
     if a["natives"]:
-        f.append(finding("info", "native", f"{len(a['natives'])} native binaries, not analyzed", list(a["natives"])))
+        f.append(finding("high", "native", NATIVE_TEXT, list(a["natives"])))
     return dict(artifact=a["art"].filename, sha256=a["art"].sha256, code_root=pkg.root(),
-                nodes=len(pkg.nodes), scope=pkg.scope(), modules=module_scopes(pkg),
+                nodes=len(pkg.nodes), scope=scope_of(a), modules=module_scopes(pkg),
                 dependencies=a["deps"], findings=f, coverage=coverage(a))
 
 def coverage(a):
     c = []
     if a["unparsed"]: c.append(f"{len(a['unparsed'])} Python files could not be parsed")
-    if a["natives"]: c.append(f"{len(a['natives'])} native binaries are not analyzed")
+    if a["natives"]: c.append(f"{len(a['natives'])} native binaries are not checked: check them separately")
     c.extend(a["notes"])
     return c
 
@@ -271,14 +281,14 @@ def diff_report(a, b):
             sev = "high" if "Python start" in why else "medium"
             f.append(finding(sev, "hook", f"new {path}: {why}"))
     # scope: where a power newly enters, and what existing code can now reach it
-    old_scope, new_scope = set(p.scope()), set(q.scope())
+    old_scope, new_scope = set(scope_of(a)), set(scope_of(b))
     def entered(k, s):
         n = q.nodes[k]
         if s == TOP:
             had = p.nodes[k]["direct_flags"] if k in p.nodes else set()
             return bool((n["direct_flags"] - had) & {"dyn-import", "dyn-attr", "dyn-exec", "dyn-patch"})
         return s in n["direct_caps"] and (k not in p.nodes or s not in p.nodes[k]["direct_caps"])
-    for s in sorted(new_scope | old_scope):
+    for s in sorted((new_scope | old_scope) - {"native"}):          # native binaries are reported below
         origin = [k for k in q.nodes if entered(k, s)]
         reach = [k for k, n in q.nodes.items() if k in p.nodes and s in n["caps"] and s not in p.nodes[k]["caps"]]
         if not origin and not reach and s in old_scope:
@@ -306,8 +316,8 @@ def diff_report(a, b):
     # binaries, dependencies, entry points
     nb = [x for x in b["natives"] if x not in a["natives"]]
     cb = [x for x in b["natives"] if x in a["natives"] and a["natives"][x] != b["natives"][x]]
-    if nb: f.append(finding("high", "native", "new native binaries (not analyzed)", nb))
-    if cb: f.append(finding("medium", "native", "changed native binaries (not analyzed)", cb))
+    if nb: f.append(finding("high", "native", "new " + NATIVE_TEXT, nb))
+    if cb: f.append(finding("high", "native", "changed " + NATIVE_TEXT, cb))
     for d in sorted(set(b["deps"]) - set(a["deps"])):
         f.append(finding("high", "dependency", f"new dependency {d} ({b['deps'][d]}): not analyzed here, "
                                                "so its scope is unknown (TOP), including test-only and optional ones"))
@@ -335,7 +345,8 @@ def diff_report(a, b):
 def show_findings(fs):
     for x in fs:
         nodes = ", ".join(x["nodes"]) + (f", and {x['more']} more" if x["more"] else "")
-        print(f"  [{x['severity']}] {x['text']}" + (f"\n         {nodes}" if nodes else ""))
+        sev = x["severity"] + (", ignored" if x.get("ignored") else "")
+        print(f"  [{sev}] {x['text']}" + (f"\n         {nodes}" if nodes else ""))
 
 def print_diff(r):
     n = r["nodes"]
@@ -366,28 +377,34 @@ def main(argv=None):
     d = sub.add_parser("diff"); d.add_argument("old"); d.add_argument("new")
     s = sub.add_parser("scope"); s.add_argument("file")
     l = sub.add_parser("lookup"); l.add_argument("sha256")
-    for x in (d, s, l): x.add_argument("--json", action="store_true")
+    for x in (d, s, l):
+        x.add_argument("--json", action="store_true")
+        x.add_argument("--ignore-native", action="store_true",
+                       help="report native binaries but do not fail on them; check them separately")
     args = ap.parse_args(argv)
     sys.setrecursionlimit(20000)
     try:
         if args.cmd == "diff":
             a, b = analyze(load(args.old)), analyze(load(args.new))
             r = with_known(diff_report(a, b), a, b)
-            print(json.dumps(r, indent=2)) if args.json else print_diff(r)
         elif args.cmd == "scope":
             a = analyze(load(args.file))
             r = with_known(scope_report(a), a)
-            print(json.dumps(r, indent=2)) if args.json else print_scope(r)
         else:
             if not re.fullmatch(r"[0-9a-f]{64}", args.sha256):
                 raise SystemExit("error: expected a SHA-256 digest (64 lowercase hex characters)")
             r = lookup(args.sha256)
-            print(json.dumps(r, indent=2)) if args.json else print_scope(r)
+        if args.ignore_native:
+            for x in r["findings"]:
+                if x["kind"] == "native": x["ignored"] = True
+        if args.json: print(json.dumps(r, indent=2))
+        elif args.cmd == "diff": print_diff(r)
+        else: print_scope(r)
     except SystemExit as e:
         if isinstance(e.code, str):
             print(e.code, file=sys.stderr); return 2
         raise
-    return 1 if any(x["severity"] == "high" for x in r["findings"]) else 0
+    return 1 if any(x["severity"] == "high" and not x.get("ignored") for x in r["findings"]) else 0
 
 if __name__ == "__main__":
     sys.exit(main())

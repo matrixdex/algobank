@@ -46,6 +46,14 @@ def advisories(repo, base, names):
                 with open(path) as fh: out.append(yaml.safe_load(fh))
     return out
 
+def ranges(a):
+    """'all versions', or the ranges an advisory gives instead of a version list."""
+    out = []
+    for r in a.get("ranges", []):
+        ev = [f"{k} {v}" for e in r.get("events", []) for k, v in e.items() if not (k == "introduced" and v == "0")]
+        out.append(", ".join(ev) or "all versions")
+    return "; ".join(out) or "all versions"
+
 def known_bad(entries, names):
     releases, files, seen = {}, {}, set()
     for e in sorted(entries, key=lambda e: e["id"]):
@@ -58,8 +66,13 @@ def known_bad(entries, names):
             p = a.get("package", {})
             if p.get("ecosystem") != "PyPI" or ad.norm(p.get("name", "")) not in names:
                 continue
-            for v in a.get("versions", []):
-                releases.setdefault(f"{ad.norm(p['name'])}=={v}", []).append(dict(id=e["id"], kind=kind, summary=summary(e)))
+            name = ad.norm(p["name"])
+            if a.get("versions"):
+                for v in a["versions"]:
+                    releases.setdefault(f"{name}=={v}", []).append(dict(id=e["id"], kind=kind, summary=summary(e)))
+            else:                                      # a range, or nothing: listed for every version of the name
+                releases.setdefault(f"{name}==*", []).append(
+                    dict(id=e["id"], kind=kind, summary=summary(e), versions=ranges(a)))
         for f in e.get("database_specific", {}).get("iocs", {}).get("files", []):
             d = f.get("digests", {}).get("sha256")
             if d:

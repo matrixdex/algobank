@@ -64,7 +64,20 @@ def test_new_dynamic_exec():
 def test_new_native_binary():
     new = dict(BASE, **{"demo/_speedups.so": b"\x7fELF not really"})
     r = run_diff(BASE, new)
-    assert any(x["kind"] == "native" for x in high(r))
+    assert any(x["kind"] == "native" and x["text"] == "new native binary detected. not checked" for x in high(r))
+    assert "native" in r["scope"]["new"] and "native" not in r["scope"]["old"]
+
+def test_native_binary_can_be_ignored():
+    """A package with native code can still be algobanked: the binary stays reported, marked ignored,
+    to be checked separately, and does not fail the run."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = wheel(tmp, "1.0", dict(BASE, **{"demo/_speedups.so": b"\x7fELF not really"}))
+        r = ad.scope_report(ad.analyze(ad.load(path)))
+        assert any(x["text"] == "native binary detected. not checked" for x in high(r)) and "native" in r["scope"]
+        assert ad.main(["scope", path]) == 1
+        assert ad.main(["scope", path, "--ignore-native"]) == 0
+        hooked = wheel(tmp, "1.1", dict(BASE, **{"demo/_speedups.so": b"\x7fELF", "x.pth": "import demo\n"}))
+        assert ad.main(["scope", hooked, "--ignore-native"]) == 1      # only native findings are ignored
 
 def test_new_dependency():
     """axios 1.14.1 added one dependency, plain-crypto-js, which carried the malware."""
@@ -140,6 +153,17 @@ def test_known_malicious_release():
             r = ad.with_known(ad.scope_report(a), a)
             assert any(x["kind"] == "known malicious" and "MAL-0" in x["text"] for x in high(r))
             assert any("as of 2026-10-27" in c for c in r["coverage"])
+        finally: reset()
+
+def test_known_malicious_name_all_versions():
+    """Many malicious-package reports give a range ("every version") instead of a version list."""
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            with_data(tmp, bad_releases={"demo==*": [dict(id="MAL-2", kind="malicious", summary="typosquat",
+                                                          versions="all versions")]})
+            a = ad.analyze(ad.load(wheel(tmp, "7.0", BASE)))
+            r = ad.with_known(ad.scope_report(a), a)
+            assert any("MAL-2 (listed for all versions)" in x["text"] for x in high(r))
         finally: reset()
 
 def test_known_malicious_file_inside_archive():

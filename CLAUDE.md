@@ -22,7 +22,7 @@ Report a finding as found, and label any interpretation as yours. Reading meanin
 
 ## Terms
 
-- **Algobanking**: analyzing a package with Algobank (code Merkle tree, scope, checks). An algobanked package has been analyzed this way.
+- **Algobanking**: running Algobank on code (code Merkle tree, scope, checks) and saving the result in Algobank, keyed by the code's hash. An algobanked package has been analyzed and its report stored. Findings do not block algobanking: a package with native binaries is algobanked with those binaries flagged to be checked separately.
 - **Codegen**: anything that writes or runs code: AI coding agents, GitHub Actions and other CI runners, package managers and build systems, and human maintainers. Findings are feedback that helps codegens write better code.
 
 ## Repository conventions
