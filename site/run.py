@@ -13,7 +13,7 @@ records = [json.loads(line) for line in bank.splitlines() if line.strip()]
 def cell(v): return "<td>" + html.escape(str(v)) + "</td>"
 rows = "".join(
     f"<tr data-name='{html.escape(r['name'])}' data-version='{html.escape(r['version'])}'>"
-    + cell(r["name"]) + cell(r["version"]) + cell(", ".join(r["scope"]) or "none")
+    + cell(r["name"]) + cell(r["version"]) + "<td>" + (", ".join("<code class='top'>TOP</code>" if s == "TOP" else html.escape(s) for s in r["scope"]) or "none") + "</td>"
     + cell(r["findings"]["high"]) + cell(r["findings"]["warning"]) + cell(r["admitted"])
     + cell(r.get("sha256", "")) + cell(r["code_root"]) + "</tr>"
     for r in records)
