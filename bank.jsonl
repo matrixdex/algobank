@@ -1,0 +1,1 @@
+{"admitted": "2026-10-27", "algobanked_by": "algobank 0.1.0 (itself)", "code_root": "84dd6f259681292a8c1b7a5934ba31f9f40dbea27c406cdd9adb128507c8e47e", "findings": {"high": 0, "info": 1, "low": 0, "medium": 0, "warning": 0}, "name": "algobank", "nodes": 108, "scope": ["file"], "source": "https://github.com/matrixdex/algobank/tree/0f81447", "version": "0.1.0"}
