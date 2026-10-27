@@ -25,6 +25,21 @@ document.addEventListener("DOMContentLoaded", () => {
       : !named.length ? `${name} is not algobanked` : "";
     history.replaceState(null, "", name ? "?q=" + encodeURIComponent(q.value.trim()) : location.pathname);
   }
+  // EXPORT: the bank as shipped in this page, as bank.jsonl (unchanged) or bank.csv (one column per field)
+  const jsonl = document.getElementById("bank.jsonl").textContent.trim() + "\n";
+  function csv() {
+    const recs = jsonl.trim().split("\n").map(l => JSON.parse(l));
+    const flat = r => Object.fromEntries(Object.entries(r).flatMap(([k, v]) =>
+      Array.isArray(v) ? [[k, v.join(", ")]] : v && typeof v === "object" ? Object.entries(v).map(([s, x]) => [k + "." + s, x]) : [[k, v]]));
+    const rows = recs.map(flat), cols = [...new Set(rows.flatMap(Object.keys))];
+    const quote = x => /[",\n]/.test(String(x ?? "")) ? '"' + String(x).replace(/"/g, '""') + '"' : String(x ?? "");
+    return [cols, ...rows.map(r => cols.map(c => r[c]))].map(r => r.map(quote).join(",")).join("\n") + "\n";
+  }
+  document.querySelectorAll("[data-export]").forEach(b => b.addEventListener("click", () => {
+    const type = b.dataset.export, a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([type === "csv" ? csv() : jsonl], { type: type === "csv" ? "text/csv" : "application/x-ndjson" }));
+    a.download = "bank." + type; a.click(); URL.revokeObjectURL(a.href);
+  }));
   q.value = new URLSearchParams(location.search).get("q") || "";
   q.addEventListener("input", search);
   search();
