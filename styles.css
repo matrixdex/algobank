@@ -161,7 +161,7 @@ h1, #q::placeholder {
   text-align: center;
 }
 /* wide screens: the footer is one row, algobank and then the page links */
-@media screen and (min-width: 940px) {  /* the row fits from 940 pixels; narrower screens stack it */
+@media screen and (min-width: 980px) {  /* the row fits from 980 pixels; narrower screens wrap it */
   footer {
     display: flex; align-items: baseline; justify-content: space-between; gap: 24px;
     margin-top: 48px; padding-top: 16px; border-top: 1px solid rgb(220, 220, 220);
@@ -250,7 +250,7 @@ ul > li::before {
 .findings [data-sev=low] li::before { background-color: #00ff41; }
 .findings [data-sev=info] li::before { background-color: rgb(220, 220, 220); }
 /* narrow screens: the footer is one left-aligned row, algobank first, that continues onto the next lines */
-@media screen and (max-width: 939px) {
+@media screen and (max-width: 979px) {
   footer {
     display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 20px; row-gap: 6px;
     margin-top: 48px; padding-top: 16px; border-top: 1px solid rgb(220, 220, 220);
@@ -286,4 +286,7 @@ table.known td.wide:first-child {
 }
 table.known tr.entry td:nth-child(2) {  /* an advisory identifier stays on one line */
   white-space: nowrap;
+}
+.claim {  /* the one claim algobank makes */
+  font-size: 1.15rem; color: white; border-left: 4px solid #00ff41; padding: 4px 0 4px 16px;
 }

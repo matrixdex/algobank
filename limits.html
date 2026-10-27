@@ -1,0 +1,50 @@
+<html lang='en'>
+<head>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<link rel='shortcut icon' type='image/x-icon' href='assets/favicon.ico'>
+<link rel='stylesheet' href='styles.css'>
+<title>Limits - algobank</title>
+<script>
+// KNOWN EXPLOITS AND VULNERABILITIES: search, details on narrow screens, exports (acts only on that page)
+document.addEventListener("DOMContentLoaded", () => {
+  const q = document.getElementById("q"), msg = document.getElementById("msg"), data = document.getElementById("known.jsonl");
+  if (!q || !data) return;
+  const phone = matchMedia("(max-width: 600px)"), full = q.placeholder;
+  const placeholder = () => q.placeholder = phone.matches ? q.dataset.phone : full;
+  placeholder(); phone.addEventListener("change", placeholder);
+  const entries = [...document.querySelectorAll("table.known tbody")];
+  function search() {
+    const term = (q.value.trim().split(/\s+|==/)[0] || "").toLowerCase().replace(/[-_.]+/g, "-");
+    entries.forEach(t => t.hidden = term && !t.dataset.search.replace(/[-_.]+/g, "-").includes(term));
+    document.querySelectorAll("table.known").forEach(t => t.hidden = term && !t.querySelector("tbody:not([hidden])"));
+    msg.textContent = term && entries.every(t => t.hidden) ? `${q.value.trim()}: no known exploits or vulnerabilities` : "";
+    history.replaceState(null, "", term ? "?q=" + encodeURIComponent(q.value.trim()) : location.pathname);
+  }
+  q.value = new URLSearchParams(location.search).get("q") || "";
+  q.addEventListener("input", search); search();
+  document.querySelectorAll("table.known tr.entry").forEach(tr => {
+    const toggle = () => { const d = tr.nextElementSibling; d.hidden = !d.hidden; tr.setAttribute("aria-expanded", !d.hidden); };
+    tr.addEventListener("click", toggle);
+    tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+  });
+  const jsonl = data.textContent.trim() + "\n";
+  function csv() {
+    const rows = jsonl.trim().split("\n").map(l => JSON.parse(l)), cols = [...new Set(rows.flatMap(Object.keys))];
+    const quote = x => { const s = Array.isArray(x) ? x.join(", ") : String(x ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    return [cols, ...rows.map(r => cols.map(c => r[c]))].map(r => r.map(quote).join(",")).join("\n") + "\n";
+  }
+  document.querySelectorAll("[data-export]").forEach(b => b.addEventListener("click", () => {
+    const type = b.dataset.export, a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([type === "csv" ? csv() : jsonl], { type: type === "csv" ? "text/csv" : "application/x-ndjson" }));
+    a.download = "known." + type; a.click(); URL.revokeObjectURL(a.href);
+  }));
+});
+</script>
+</head>
+<body>
+<h1>Limits</h1>
+<p><p class='claim'>algobank claims one thing: a file whose hash is in the bank, under its code root, has been algobanked and is secure to the best of algobank's capabilities. Nothing else is claimed.</p><h2>Where algobank fails</h2><ul><li>Native binaries are not parsed. Each is flagged <code>native binary detected. not checked</code> and must be checked by other means.</li><li>Software insurance is not live. No version is insured, no fee is charged and no damages are paid.</li><li>Static analysis can be evaded. Algobank reads code without running it: code that builds its behavior at run time is flagged as <code class='top'>TOP</code>, not understood.</li><li>Some dynamic code is missed: functions stored in a dictionary and called by key, introspection through dunder attributes or frames, and the targets of computed <code>getattr</code>.</li><li>Time and randomness are not detected: code that is not deterministic can look pure.</li><li>Python only, with a short table that maps libraries to scope. A library missing from the table is missed.</li><li>Code is checked before it runs, not while it runs. Another package can replace algobanked code in memory, and Algobank does not sandbox or enforce scope at run time.</li><li>Known exploits cover the 1,000 most downloaded PyPI packages, as of the date of the data. Anything reported later, or for other packages, is missing until Algobank is updated.</li><li>Called packages are not analyzed unless they are algobanked in the same run, and the build code of a source distribution is never analyzed.</li><li>Code roots depend on the Python version (3.14): another version can give a different root for the same code.</li><li>The bank has one builder. Independent builders that must agree before a version is admitted are specified, not built.</li></ul><h2>Disclaimer</h2><p>Algobank is released under CC0 1.0 Universal and offered as is, without warranties of any kind (CC0, section 4). A report is a signal for review, not a guarantee.</p></p>
+<footer><h3><a href='index.html'>algobank</a></h3><nav><div class='indexlink'><a href=architecture.html>Architecture</a><br></div><div class='indexlink'><a href=findings.html>Findings</a><br></div><div class='indexlink'><a href=knownexploitsandvulnerabilities.html>Known Exploits and Vulnerabilities</a><br></div><div class='indexlink'><a href=limits.html>Limits</a><br></div><div class='indexlink'><a href=source.html>Source</a><br></div><div class='indexlink'><a href=usage.html>Usage</a><br></div><div class='indexlink'><a href=vision.html>Vision</a><br></div></nav></footer>
+</body>
+</html>
