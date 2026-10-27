@@ -681,7 +681,7 @@ The repository is the whole company. Each branch has one role:
 | `web` | The generated website only | At matrixdex.github.io/algobank, by GitHub Pages |
 | `live` | The live state: the current known advisories and the bank of algobanked versions, as records | Read as files |
 
-Every website is a dex, built by dexweb with its standard rendering. `site/data.json` holds the pages, `site/config.json` the dexweb templates, and `site/styles.css` dexweb's default styles plus one rule: titles use Italiana, served from the dex itself (`site/assets/`, SIL Open Font License). The pages load nothing from any other site. `python run.py` in `site/` writes the website to `site/gen/`, which is published to `web`.
+Every website is a dex, built by dexweb with its standard rendering. `site/data.json` holds the pages, `site/config.json` the dexweb templates, and `site/styles.css` dexweb's default styles plus three additions: titles use Italiana, served from the dex itself (`site/assets/`, SIL Open Font License); code blocks are boxes whose long lines scroll inside them, as in the ledgdex docs; and a word too long for a small phone breaks, so no page is wider than the screen (checked at 320, 390, 768 and 1280 pixels). The pages load nothing from any other site. `python run.py` in `site/` writes the website to `site/gen/`, which is published to `web`.
 
 dexweb is algobanked before it builds the website: its closure (dexweb, `beautifulsoup4`, `cobble`, `importlib_resources`, `mammoth`, `pypdf`, `soupsieve`, `typing_extensions`) is downloaded as wheels, checked in one `algobank scope` run with no high findings, and installed only from those files (`pip install --no-index --find-links`).
 
