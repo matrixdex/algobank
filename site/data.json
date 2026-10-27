@@ -1,0 +1,66 @@
+[
+    {
+        "title": "Algobank",
+        "body": [
+            "Algorithm Bank for composable secure algorithms and software insurance",
+            "Algobank gives every function in a Python package a content hash (a code Merkle tree) and shows what the package can do: use files, the network, processes or the environment, load native code, or run dynamic code it cannot see into (<code>TOP</code>). Algobanking a package means analyzing it this way.",
+            "Algobanking is both analysis and storage. Analysis determines whether a version is safe. Storage admits that exact version, by its hash, to the club of versions safe by Algobank standards, until it is deemed insecure. Algobank is the first algobanked code: it has algobanked itself.",
+            "An insecure version only needs to be caught once, and a catch is kept forever. A secure version passes Algobank every time it is checked."
+        ]
+    },
+    {
+        "title": "Usage",
+        "body": [
+            "Algobank has no network access and writes no files. It reads only the wheels you give it. Your package manager downloads them.",
+            "<pre><code># INSTALL\npip install algobank                     # standard library only, no dependencies\n\n# DOWNLOAD (pip has the network, algobank does not)\npip download --only-binary :all: -d wheels/ requests==2.34.2    # the package and every package it calls\n                                         # --only-binary: never run an sdist&#x27;s build code\n\n# CHECK EVERY FILE\nalgobank scope wheels/*.whl              # one report per file; called packages missing from wheels/ get a warning\n\n# INSTALL EXACTLY WHAT WAS CHECKED\npip install --no-index --find-links wheels/ requests==2.34.2</code></pre>",
+            "<pre><code># COMPARE TWO VERSIONS\npip download --no-deps --only-binary :all: -d wheels/ requests==2.31.0\npip download --no-deps --only-binary :all: -d wheels/ requests==2.32.3\nalgobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl</code></pre>",
+            "<pre><code>requests-2.31.0-py3-none-any.whl -&gt; requests-2.32.3-py3-none-any.whl\n  nodes (functions, classes, module values): 650 (441 unchanged, 26 code changed, 170 affected by a changed dependency, 13 added, 1 removed)\n  scope: TOP, env, file, network -&gt; TOP, env, file, network\nfindings:\n  [high] new: requests 2.32.3: PYSEC-2026-1872 (algobank/known.json)\n  [high] new: requests 2.32.3: PYSEC-2026-2275 (algobank/known.json)\n  [high] old: requests 2.31.0: PYSEC-2026-1872 (algobank/known.json)\n  [high] old: requests 2.31.0: PYSEC-2026-1873 (algobank/known.json)\n  [high] old: requests 2.31.0: PYSEC-2026-2275 (algobank/known.json)\n  ...</code></pre>",
+            "<pre><code># OPTIONS\nalgobank scope wheels/*.whl --json            # the same report for programs and agents\nalgobank scope wheels/*.whl --ignore-native   # report native binaries, but do not fail on them\n\n# EXIT STATUS\n# 0  no high finding\n# 1  a high finding\n# 2  error</code></pre>"
+        ]
+    },
+    {
+        "title": "Findings",
+        "body": [
+            "Every finding is reported. None is suppressed because it is common or probably harmless.",
+            "<code>high</code>: a file that runs on every Python start (<code>.pth</code>, <code>sitecustomize.py</code>); a new power (network, process, environment, native code, <code>TOP</code>) and where it enters; new <code>eval</code>, <code>exec</code> or deserialization; a native binary (native binary detected. not checked); a new dependency; an sdist, whose build code is not analyzed; a known malicious or vulnerable release. The exit status is 1.",
+            "<code>warning</code>: a called package that was not algobanked in the same run. The exit status does not change.",
+            "<code>medium</code>, <code>low</code>, <code>info</code>: other new dynamic code, new entry points, changed dependency ranges, data files, and the scope each function uses."
+        ]
+    },
+    {
+        "title": "Known Exploits and Vulnerabilities",
+        "body": [
+            "Algobank ships the published advisories for the 1,000 most downloaded PyPI packages: malicious releases from OpenSSF (<code>MAL-</code>) and known vulnerabilities from PyPA (<code>PYSEC-</code>), unchanged, in <a href='https://raw.githubusercontent.com/matrixdex/algobank/refs/heads/main/algobank/known.json'>known.json</a>.",
+            "Algobank's own code decides on your machine whether a record applies: a listed version, or a version inside a range, compared by PEP 440 ordering. A match is a high finding that names the advisory.",
+            "Data as of 2026-10-27: 1,372 advisories. Update Algobank to get newer ones."
+        ]
+    },
+    {
+        "title": "Bank",
+        "body": [
+            "Algobanked versions, by hash. A version stays admitted until it is deemed insecure.",
+            "<code>algobank</code> 0.1.0: code root <code>84dd6f259681292a8c1b7a5934ba31f9f40dbea27c406cdd9adb128507c8e47e</code>, scope <code>file</code>, 108 nodes. Algobank reads only the files it is given and its own <code>known.json</code>."
+        ]
+    },
+    {
+        "title": "Vision",
+        "body": [
+            "Algobank is the bank of algorithms where codegens securely run the work of other codegens, vetted by codegens.",
+            "A codegen is anything that writes or runs code: AI coding agents, GitHub Actions and other CI runners, package managers and build systems, and human maintainers.",
+            "Algobank is an enclosure where humans and bots meet to check out each other's code."
+        ]
+    },
+    {
+        "title": "Architecture",
+        "body": [
+            "<a href='https://github.com/matrixdex/algobank/blob/main/docs/ARCHITECTURE-v0.1.md'>Architecture reference</a>"
+        ]
+    },
+    {
+        "title": "Source",
+        "body": [
+            "<a href='https://github.com/matrixdex/algobank'>github.com/matrixdex/algobank</a>: the library on <code>main</code>, this website on <code>web</code>.",
+            "<a href='https://github.com/matrixdex/algobank/issues'>Issues</a>"
+        ]
+    }
+]

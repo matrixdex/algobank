@@ -22,13 +22,18 @@ Report a finding as found, and label any interpretation as yours. Reading meanin
 
 ## Asymmetry rule
 
-An insecure package only needs to be caught once; a secure package must pass verification every time. So a catch is kept (known-bad records are only ever added), and a pass is never stored or trusted from elsewhere: the codegen runs the check itself, every time. Spend CPU cycles on this redundancy.
+An insecure package only needs to be caught once; a secure package must pass verification every time. Every package is a version: exactly the code Algobank got, identified by its hash.
+
+- A catch is kept forever. A rejected version is cached as insecure and stays rejected; known-bad records are only ever added.
+- A pass is stored only as the admission of that exact version. It never transfers to another version and is never inferred from one. A rejection affects only the rejected version: if a newer version is rejected and an older one is admitted, Algobank recommends and keeps insuring the older one.
+- Everything not admitted is checked by the codegen itself, every time. Spend CPU cycles on this redundancy.
 
 Data that agents read ships as code or as published records that code evaluates on the agent's machine, never as results interpreted elsewhere. Example: advisories ship unchanged in `algobank/known.json`, and `diff.py` evaluates their version ranges at run time; reports cite the advisory identifier instead of paraphrasing it.
 
 ## Terms
 
-- **Algobanking**: running Algobank on code (code Merkle tree, scope, checks) and saving the code in Algobank, keyed by its hash. What is saved is code, not a verdict: anyone can run Algobank on it again, and every check reruns (asymmetry rule). Algobank is the first algobanked code: it has algobanked itself. Findings do not block algobanking: a package with native binaries is algobanked with those binaries flagged to be checked separately.
+- **Algobanking**: both analysis and storage. Analysis runs Algobank on a version (code Merkle tree, scope, checks) and determines whether it is safe; the analysis is available in Algobank. Storage saves the version in Algobank by its hash: admission to the club of versions that are safe by Algobank standards, and so safe to reuse. Admission lasts only until the version is deemed insecure. Algobank is the first algobanked code: it has algobanked itself. Findings do not block algobanking: a package with native binaries is algobanked with those binaries flagged to be checked separately.
+- **Called packages**: every package a package calls (its dependencies) should be algobanked too. This is a soft condition: a called package that is not algobanked is a warning, which never changes the exit status. A new dependency in a diff stays high.
 - **Codegen**: anything that writes or runs code: AI coding agents, GitHub Actions and other CI runners, package managers and build systems, and human maintainers. Findings are feedback that helps codegens write better code.
 
 ## Repository conventions

@@ -1,0 +1,10 @@
+{
+    "dexname": "Algobank",
+    "author": "Algobank",
+    "index_template": "<html lang='en'>\n                        <head>\n                            <meta charset='UTF-8'>\n                            <meta name='viewport' content='width=device-width, initial-scale=1.0'>\n                            <link rel='shortcut icon' type='image/x-icon' href='assets/favicon.ico'>\n                            <link rel='stylesheet' href='styles.css'>\n                            <title>{} Dex</title>\n                        </head>\n                        <body>\n                            <br><h1>{} DEX</h1><br>\n                            {}\n                            <br><br><br><br><br><br><br>\n                            <h3><a href='index.html'>{} DEX</a></h3>\n                        </body>\n                        </html>",
+    "page_template": "<html lang='en'>\n                        <head>\n                            <meta charset='UTF-8'>\n                            <meta name='viewport' content='width=device-width, initial-scale=1.0'>\n                            <link rel='shortcut icon' type='image/x-icon' href='assets/favicon.ico'>\n                            <link rel='stylesheet' href='styles.css'>\n                            <title>{} - {} Dex</title>\n                        </head>\n                        <body>\n                        <br>\n                        <h1>{}</h1>\n                        <br>\n                        {}\n                        <br><br><br><br><br><br><br>\n                        <h3><a href='index.html'>{} DEX</a></h3>\n                    </body>\n                    </html>",
+    "page_javascript": "",
+    "index_javascript": "",
+    "index_list_type_para": true,
+    "index_list_no_page_link_only": false
+}

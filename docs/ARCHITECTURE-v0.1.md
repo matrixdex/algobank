@@ -44,7 +44,7 @@ All other checks (tests, fuzzers, linters, reviews) are external tools whose sig
 6. Existing standards and tools are reused wherever they fit.
 7. Simplicity over saved work. Add complexity only when core functionality is impossible without it. When the alternative is only more computation, spend the CPU cycles and keep the design simple. Example: reviewing each function independently would avoid rechecking the whole package after a change, but rechecking achieves the same result, so independent function review is not added.
 8. Findings are signal. A finding is not suppressed or downgraded because it is common, inconvenient or "probably harmless". An unexplained power is reported, and code that Algobank cannot see into is rated by what it could do (`TOP`). For codegens, findings are feedback that leads to better code: when Algobank analyzed its own release, it flagged a parse-only `compile()` call as `TOP`, and replacing it with `ast.parse` made the tool's own scope exact.
-9. Catch once, pass every time. An insecure package only needs to be caught once, and a catch is kept. A secure package must pass verification every time it is checked, so a pass is never stored or trusted from elsewhere: the codegen runs the check itself, spending CPU cycles on redundancy.
+9. Catch once, pass every time. Every package is a version, identified by its hash. An insecure version only needs to be caught once, and a catch is kept forever. A secure version must pass every time it is checked: a pass is stored only as the admission of that exact version (section 9.1), never transfers to another version, and everything not admitted is checked by the codegen itself, spending CPU cycles on redundancy.
 
 ### 1.4 Layers above the core
 
@@ -55,7 +55,7 @@ Banking and insurance (vouches, deposits, penalties, interest, payouts) sit on t
 | Term | Meaning |
 |---|---|
 | **Package** | A set of source files analyzed together. One package has one code Merkle tree. |
-| **Algobanking** | Running Algobank on code, computing its code Merkle tree and scope and checking the result, and saving the code in Algobank, keyed by its hash. What is saved is code, not a verdict: anyone can run Algobank on it again, and every check reruns (principle 9). Algobank is the first algobanked code: it has algobanked itself. Findings do not block algobanking. |
+| **Algobanking** | Both analysis and storage. Analysis computes a version's code Merkle tree and scope and checks the result, and so determines whether it is safe; the analysis is available in Algobank. Storage saves the version by its hash: admission to the club of versions that are safe by Algobank standards, and so safe to reuse, until the version is deemed insecure (section 9.1). Algobank is the first algobanked code: it has algobanked itself. Findings do not block algobanking. |
 | **Codegen** | An AI coding agent. |
 | **Part** | A package admitted to the garden. The unit that is confined and run. |
 | **Node** | A function or method (`module:qualname`), a module's top-level code (`module:<module>`), or a module value (`module:=name`). |
@@ -422,6 +422,15 @@ Example admission entry (digests shortened):
 | Patch lane | A fast path from an upstream fix to an admitted garden release. |
 | Client gate | A lockfile check and an agent tool that refuse digests without the required evidence. |
 
+### 9.1 Admission and insurance
+
+Every package is a version: exactly the code Algobank received, identified by its hash. Each version is admitted or rejected on its own.
+
+- **Admission.** A version that passes algobanking is stored and admitted to the club of versions safe by Algobank standards. Algobank insures admitted versions, and their maintainers collect their share of usage fees (33% of the insurance fee goes to the programmers of the current iteration).
+- **Rejection.** A version deemed insecure, by a failed check or a known-bad record, is cached as insecure permanently. Rejection affects only that version: rejecting v2 says nothing about an admitted v1. If a newer version is rejected and an older one is admitted, Algobank recommends the older one and keeps insuring it. Algobank uses only versions deemed secure, including later versions admitted after a rejection.
+- **Fees after rejection.** Users of a rejected version keep paying the same cost for the code, but the version is no longer insured and its maintainer's share is no longer paid out. The withheld amount forms a pool that rewards secure, insured algorithms: users have a reason to move to insured versions, and maintainers and codegens have a reason to patch, release and get admitted again quickly.
+- **Disclosure.** Users of a rejected version are told that it is no longer insured, and which admitted version is. The incentive works only when users know which versions are insured.
+
 ## 10. Implementation (v0.1)
 
 ### 10.1 Files
@@ -435,6 +444,7 @@ Example admission entry (digests shortened):
 | `pyproject.toml` | Package metadata for PyPI. The build backend is `flit_core`, which has no dependencies. The wheel contains only `algobank/`. |
 | `algobank/diff.py` | Diff tool and `algobank` command: compares two versions of a package and reports new scope, dynamic code, hooks, binaries and dependencies (section 10.6). |
 | `v0.1/test_diff.py` | Tests for the diff tool on synthetic wheels that reproduce real attack patterns. |
+| `site/` | Source of the website, a dex built with dexweb (section 10.9). Not shipped. |
 | `v0.1/build_cache.py` | Builds `algobank/known.json` from the published advisory repositories (section 10.6, known data). Not shipped; it is the only part of Algobank that uses the network, and it downloads and analyzes no package. |
 | `algobank/known.json` | Published advisory records for popular packages, unchanged, shipped inside the package. |
 | `v0.1/proofs/CodeRoot.v` | Coq proof of the code root computation (section 10.4). |
@@ -548,8 +558,8 @@ The theorems hold for any output that meets the checker's conditions (section 3.
 The diff tool, run as the `algobank` command, is the first product built on the core. For a Python package it answers two questions a developer or coding agent faces when adding or updating a dependency: what changed, and what can the package do now.
 
 ```
-algobank diff OLD NEW [--json]
-algobank scope FILE [--json]
+algobank diff OLD NEW [--json] [--ignore-native]
+algobank scope FILE [FILE ...] [--json] [--ignore-native]
 ```
 
 `OLD`, `NEW` and `FILE` are paths to wheel or sdist files. The tool reads each file in memory. Nothing from the package is installed, imported or run.
@@ -577,6 +587,8 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 | New `file` scope, other new dynamic code (computed imports and attributes, `__getattr__`, `import *`), new entry point or installed script | medium |
 | Changed dependency range, new or changed data files | low |
 | Source distribution: building it runs the build backend and any `setup.py` (`TOP`) | high, in `scope` and `diff` |
+
+**Called packages.** Every package a package calls, meaning each `Requires-Dist` dependency in its metadata, should be algobanked too. This is a soft condition: a called package that was not algobanked in the same run is a `warning`, which is always reported and never changes the exit status. Give `scope` every file of a dependency closure (from `pip download` without `--no-deps`) to algobank the closure in one run. Severities, from the top: `high`, `warning`, `medium`, `low`, `info`. In `diff`, a new dependency stays high: a release that changes what it pulls in is a change to review, whether or not the dependency is algobanked.
 
 **Native binaries.** Algobank analyzes Python source and cannot see what compiled code does. A wheel with binaries gets `native` in its scope and the high finding "native binary detected. not checked", naming each binary; the binaries are recorded by hash. They need checking by other means, such as a reproducible build from source or a native-code result (section 6). This does not stop the package from being algobanked: its report is stored with the binaries flagged. `--ignore-native` keeps the finding in the report, marked ignored, and lets the run pass, for when the binaries are checked separately.
 
@@ -658,6 +670,20 @@ python3.14 -I v0.1/proofs/check_model.py
 ### 10.8 Release
 
 `uv build` (or `python -m build`) produces `dist/algobank-0.1.0-py3-none-any.whl` and `dist/algobank-0.1.0.tar.gz`. Both contain only the `algobank` package, `LICENSE`, `README.md` and metadata; tests, proofs, documents and `CLAUDE.md` are excluded. `twine check dist/*` passes. Upload is manual with the maintainer's own PyPI credentials; the repository contains no credentials and the code reads no environment variables.
+
+### 10.9 Website and branches
+
+The repository is the whole company. Each branch has one role:
+
+| Branch | Holds | Served |
+|---|---|---|
+| `main` | The core index: the library (`algobank/`), documents, tests and proofs, and the website's source in `site/` | No |
+| `web` | The generated website only | At matrixdex.github.io/algobank, by GitHub Pages |
+| `live` | The live state: the current known advisories and the bank of algobanked versions, as records | Read as files |
+
+Every website is a dex, built by dexweb with its standard rendering. `site/data.json` holds the pages, `site/config.json` the dexweb templates, and `site/styles.css` dexweb's default styles plus one rule: titles use Italiana, served from the dex itself (`site/assets/`, SIL Open Font License). The pages load nothing from any other site. `python run.py` in `site/` writes the website to `site/gen/`, which is published to `web`.
+
+dexweb is algobanked before it builds the website: its closure (dexweb, `beautifulsoup4`, `cobble`, `importlib_resources`, `mammoth`, `pypdf`, `soupsieve`, `typing_extensions`) is downloaded as wheels, checked in one `algobank scope` run with no high findings, and installed only from those files (`pip install --no-index --find-links`).
 
 ## 11. Known limitations
 

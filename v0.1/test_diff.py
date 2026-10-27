@@ -129,6 +129,27 @@ def test_no_network_no_writes():
     scope = set(ad.Package(files).scope())
     assert scope <= {"file"}, scope
 
+def test_called_packages_should_be_algobanked():
+    """A called package that was not algobanked in the same run is a warning, never a failure."""
+    with tempfile.TemporaryDirectory() as tmp:
+        demo = wheel(tmp, "1.0", BASE)                                   # calls idna
+        idna = os.path.join(tmp, "idna-3.7-py3-none-any.whl")
+        with zipfile.ZipFile(idna, "w") as z:
+            z.writestr("idna/__init__.py", "def encode(s):\n    return s\n")
+            z.writestr("idna-3.7.dist-info/METADATA", "Metadata-Version: 2.1\nName: idna\nVersion: 3.7\n")
+        alone = ad.with_called(ad.scope_report(ad.analyze(ad.load(demo))), ad.analyze(ad.load(demo)), {"demo"})
+        w = [x for x in alone["findings"] if x["severity"] == "warning"]
+        assert len(w) == 1 and w[0]["kind"] == "not algobanked" and "idna" in w[0]["text"]
+        try:
+            with_data(tmp)                                               # no advisories: only this check is tested
+            assert ad.main(["scope", demo]) == 0                         # soft: the exit status is unchanged
+            both = ad.with_called(ad.scope_report(ad.analyze(ad.load(demo))), ad.analyze(ad.load(demo)), {"demo", "idna"})
+            assert not [x for x in both["findings"] if x["severity"] == "warning"]
+            assert ad.main(["scope", demo, idna]) == 0
+        finally: reset()
+        r = run_diff(BASE, BASE, META.format(v="1.1") + "Requires-Dist: plain-crypto-js\n")
+        assert any(x["severity"] == "high" and x["kind"] == "dependency" for x in r["findings"])   # new dependency stays high
+
 # ---- known data: tested with a synthetic known.json, never the shipped one
 
 import hashlib, json

@@ -2,7 +2,7 @@
 
 Usage:
   algobank diff OLD NEW [--json]
-  algobank scope FILE [--json]
+  algobank scope FILE [FILE ...] [--json]
 
 OLD, NEW and FILE are paths to wheel or sdist files, for example from
   pip download --only-binary :all: -d wheels/ NAME==VERSION
@@ -16,6 +16,10 @@ malicious releases, releases with known vulnerabilities, and known malicious fil
 Native binaries (.so, .pyd, .dylib, .dll) are not checked: each is a high finding, "native binary
 detected. not checked", to be checked separately. With --ignore-native they are still reported, marked
 ignored, and do not affect the exit status, so a package with native code can still be algobanked.
+
+Every package a package calls (its Requires-Dist dependencies) should be algobanked too. Give scope all
+the files of a dependency closure (pip download without --no-deps); a called package that is not among
+them gets a warning. A warning never changes the exit status.
 
 Exit status: 0 no high-severity findings, 1 high-severity findings, 2 error.
 """
@@ -190,7 +194,7 @@ def requires(members):
         spec = m.group(2).strip()
         if spec.startswith("("):                      # older metadata wraps the version range in parentheses
             spec = re.sub(r"^\(([^)]*)\)", r"\1", spec)
-        spec = re.sub(r"\s+", " ", spec).strip()
+        spec = re.sub(r"\s+", " ", spec).strip().lstrip("; ")          # "; extra == 'x'" has no version range
         deps[m.group(1).lower().replace("-", "_")] = spec or "any version"
     return deps
 
@@ -261,6 +265,8 @@ def module_scopes(pkg):
 def scope_of(a):
     """The package's scope, with `native` when it ships binaries Algobank cannot see into."""
     return sorted(set(a["pkg"].scope()) | ({"native"} if a["natives"] else set()))
+
+ORDER = {"high": 0, "warning": 1, "medium": 2, "low": 3, "info": 4}
 
 def finding(sev, kind, text, nodes=()):
     nodes = list(nodes)
@@ -362,8 +368,7 @@ def diff_report(a, b):
     new_files = [x for x in b["other"] if x not in a["other"]]
     if new_files: f.append(finding("low", "file", "new non-Python files", new_files))
     if changed_files: f.append(finding("low", "file", "changed non-Python files", changed_files))
-    order = {"high": 0, "medium": 1, "low": 2, "info": 3}
-    f.sort(key=lambda x: order[x["severity"]])
+    f.sort(key=lambda x: ORDER[x["severity"]])
     return dict(old=dict(artifact=a["art"].filename, sha256=a["art"].sha256, code_root=p.root()),
                 new=dict(artifact=b["art"].filename, sha256=b["art"].sha256, code_root=q.root()),
                 nodes=dict(total=len(q.nodes), unchanged=len(same), code_changed=len(code),
@@ -371,6 +376,15 @@ def diff_report(a, b):
                 code_changed=sorted(code), added=sorted(added), removed=sorted(removed),
                 scope=dict(old=sorted(old_scope), new=sorted(new_scope)),
                 findings=f, coverage=coverage(a) + [c for c in coverage(b) if c not in coverage(a)])
+
+def with_called(r, a, algobanked):
+    """Warn about each called package that was not algobanked in this run. A warning is reported but never
+    fails the run: algobanking every called package is the goal, and its absence is a soft condition."""
+    w = [finding("warning", "not algobanked", f"calls {d} ({a['deps'][d]}), which was not algobanked in this run: "
+                                               "run algobank on it too")
+         for d in sorted(a["deps"]) if norm(d) not in algobanked]
+    r["findings"] = sorted(r["findings"] + w, key=lambda x: ORDER[x["severity"]])
+    return r
 
 def show_findings(fs):
     for x in fs:
@@ -405,7 +419,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="algobank", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("diff"); d.add_argument("old"); d.add_argument("new")
-    s = sub.add_parser("scope"); s.add_argument("file")
+    s = sub.add_parser("scope"); s.add_argument("files", nargs="+", metavar="file")
     for x in (d, s):
         x.add_argument("--json", action="store_true")
         x.add_argument("--ignore-native", action="store_true",
@@ -415,21 +429,22 @@ def main(argv=None):
     try:
         if args.cmd == "diff":
             a, b = analyze(load(args.old)), analyze(load(args.new))
-            r = with_known(diff_report(a, b), a, b)
-        elif args.cmd == "scope":
-            a = analyze(load(args.file))
-            r = with_known(scope_report(a), a)
-        if args.ignore_native:
+            reports = [with_called(with_known(diff_report(a, b), a, b), b, {b["release"][0]} if b["release"] else set())]
+        else:
+            arts = [analyze(load(f)) for f in args.files]
+            algobanked = {a["release"][0] for a in arts if a["release"]}
+            reports = [with_called(with_known(scope_report(a), a), a, algobanked) for a in arts]
+        for r in reports:
             for x in r["findings"]:
-                if x["kind"] == "native": x["ignored"] = True
-        if args.json: print(json.dumps(r, indent=2))
-        elif args.cmd == "diff": print_diff(r)
-        else: print_scope(r)
+                if args.ignore_native and x["kind"] == "native": x["ignored"] = True
+        if args.json: print(json.dumps(reports[0] if len(reports) == 1 else reports, indent=2))
+        else:
+            for r in reports: print_diff(r) if args.cmd == "diff" else print_scope(r)
     except SystemExit as e:
         if isinstance(e.code, str):
             print(e.code, file=sys.stderr); return 2
         raise
-    return 1 if any(x["severity"] == "high" and not x.get("ignored") for x in r["findings"]) else 0
+    return 1 if any(x["severity"] == "high" and not x.get("ignored") for r in reports for x in r["findings"]) else 0
 
 if __name__ == "__main__":
     sys.exit(main())

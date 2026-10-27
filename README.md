@@ -21,6 +21,8 @@ Use `--only-binary :all:`. Without it, pip may download an sdist, and pip runs a
 
 To vet a whole dependency closure, leave out `--no-deps`, analyze every downloaded wheel, then install exactly those files: `pip install --no-index --find-links wheels/ NAME==VERSION`.
 
+Give `algobank scope` every downloaded file at once (`algobank scope wheels/*.whl`). Every package a package calls should be algobanked too: a called package missing from the run gets a warning, which never changes the exit status.
+
 It reports, by severity:
 
 - files that run on every Python start (`.pth`, `sitecustomize.py`)
