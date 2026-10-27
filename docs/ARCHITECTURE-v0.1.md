@@ -683,7 +683,16 @@ The repository is the whole company. Each branch has one role:
 
 Every website is a dex, built by dexweb with its standard rendering. `site/data.json` holds the pages, `site/config.json` the dexweb templates, and `site/styles.css` dexweb's default styles plus three additions: titles use Italiana, served from the dex itself (`site/assets/`, SIL Open Font License); code blocks are boxes whose long lines scroll inside them, as in the ledgdex docs; and a word too long for a small phone breaks, so no page is wider than the screen (checked at 320, 390, 768 and 1280 pixels). The pages load nothing from any other site. `python run.py` in `site/` writes the website to `site/gen/`, which is published to `web`.
 
-dexweb is algobanked before it builds the website: its closure (dexweb, `beautifulsoup4`, `cobble`, `importlib_resources`, `mammoth`, `pypdf`, `soupsieve`, `typing_extensions`) is downloaded as wheels, checked in one `algobank scope` run with no high findings, and installed only from those files (`pip install --no-index --find-links`).
+Everything Algobank depends on is algobanked and admitted to the bank (`bank.jsonl` on `live`), each version by its file's SHA-256, checked against PyPI's published digest:
+
+| Version | Used for | Scope | Findings |
+|---|---|---|---|
+| `algobank` 0.1.0 | Itself: the first algobanked code | `file` | no high |
+| `flit_core` 3.12.0 | Algobank's build backend, run when Algobank is installed from source | `TOP`, `env`, `file` | no high |
+| `dexweb` 4.2.5 | Building the website | `file`, `process` | no high |
+| `beautifulsoup4` 4.15.0, `cobble` 0.1.4, `importlib_resources` 7.1.0, `mammoth` 1.13.0, `pypdf` 6.21.2, `soupsieve` 3.0.4, `typing_extensions` 4.16.0 | The packages dexweb calls | from `TOP` alone to `TOP`, `env`, `file`, `process` (`pypdf`); `mammoth` uses `network` | no high; warnings only for optional extras that the closure does not install |
+
+The whole dexweb closure is checked in one `algobank scope` run, and the website is built only from those files (`pip install --no-index --find-links`). Algobank itself needs none of these at run time: it uses the standard library only.
 
 ## 11. Known limitations
 

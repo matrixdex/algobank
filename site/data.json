@@ -39,8 +39,11 @@
         "title": "Bank",
         "body": [
             "Algobanked versions, by hash. A version stays admitted until it is deemed insecure.",
-            "<code>algobank</code> 0.1.0: code root <code>84dd6f259681292a8c1b7a5934ba31f9f40dbea27c406cdd9adb128507c8e47e</code>, scope <code>file</code>, 108 nodes. Algobank reads only the files it is given and its own <code>known.json</code>.",
-            "The bank is <a href='https://github.com/matrixdex/algobank/blob/live/bank.jsonl'>bank.jsonl</a> on the live branch: one admitted version per line, append-only. These are records, not verdicts to trust: run <code>algobank scope</code> on any version yourself."
+            "<code>algobank</code> 0.1.0: code root <code>84dd6f259681292a8c1b7a5934ba31f9f40dbea27c406cdd9adb128507c8e47e</code>, scope <code>file</code>, 108 nodes. Algobank reads only the files it is given and its own <code>known.json</code>. It is the first algobanked code: it has algobanked itself.",
+            "<code>flit_core</code> 3.12.0: Algobank's build backend. Scope <code>TOP</code>, <code>env</code>, <code>file</code>.",
+            "<code>dexweb</code> 4.2.5, which builds this website, and every package it calls: <code>beautifulsoup4</code> 4.15.0, <code>cobble</code> 0.1.4, <code>importlib_resources</code> 7.1.0, <code>mammoth</code> 1.13.0, <code>pypdf</code> 6.21.2, <code>soupsieve</code> 3.0.4, <code>typing_extensions</code> 4.16.0.",
+            "Each version is admitted by its file's SHA-256, checked against PyPI, with no high finding.",
+            "The bank is <a href='https://github.com/matrixdex/algobank/blob/live/bank.jsonl'>bank.jsonl</a> on the live branch: one admitted version per line, append-only, with its hash, code root, scope and findings. These are records, not verdicts to trust: run <code>algobank scope</code> on any version yourself."
         ]
     },
     {
