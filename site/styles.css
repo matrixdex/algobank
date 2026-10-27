@@ -64,80 +64,80 @@ img {
 #msg:not(:empty) {
   margin: 8px 0 16px; font-family: monospace; color: #ff4141;  /* "... not algobanked" is red */
 }
-#bank {
+:is(#bank, table.known) {
   width: 100%; border-collapse: collapse; font: 14px monospace; color: rgb(220, 220, 220); margin: 0 0 16px;
 }
-#bank th, #bank td {
+:is(#bank, table.known) th, :is(#bank, table.known) td {
   text-align: left; padding: 6px 16px 6px 0;
 }
-#bank th {
+:is(#bank, table.known) th {
   color: white; font-weight: 400; border-bottom: 1px solid rgb(220, 220, 220);
 }
-#bank tbody {
+:is(#bank, table.known) tbody {
   border-bottom: 1px solid rgb(20, 20, 20);
 }
-#bank td.pkg {
+:is(#bank, table.known) td.pkg {
   overflow-wrap: anywhere;
 }
-#bank tr.entry:focus-visible {
+:is(#bank, table.known) tr.entry:focus-visible {
   outline: 1px solid #00ff41;
 }
-#bank tr.details td {
+:is(#bank, table.known) tr.details td {
   padding: 4px 0 12px;
 }
-#bank dl {  /* the record's details: a label column and a value column */
+:is(#bank, table.known) dl {  /* the record's details: a label column and a value column */
   display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; padding: 8px 12px;
 }
-#bank dt {
+:is(#bank, table.known) dt {
   color: white;
 }
-#bank dd {
+:is(#bank, table.known) dd {
   margin: 0; overflow-wrap: anywhere;
 }
-#bank dd code {
+:is(#bank, table.known) dd code {
   padding: 0; background: none; font-size: 100%;
 }
 button.copy {
   font-size: 12px; padding: 1px 8px; margin: 0 0 0 8px; border-radius: 0;
 }
 /* wide screens: every field in its own column, no details; narrow screens: package and findings, details on click */
-#bank .narrow, #bank tr.details {
+:is(#bank, table.known) .narrow, :is(#bank, table.known) tr.details {
   display: none;
 }
-#bank tr.entry {
+:is(#bank, table.known) tr.entry {
   cursor: default;
 }
-#bank tr.entry:hover, #bank tr.entry[aria-expanded=true] {
+:is(#bank, table.known) tr.entry:hover, :is(#bank, table.known) tr.entry[aria-expanded=true] {
   background-color: transparent;
 }
-#bank td.wide, #bank th.wide {
+:is(#bank, table.known) td.wide, :is(#bank, table.known) th.wide {
   white-space: nowrap;
 }
 @media screen and (max-width: 1044px) {  /* the full table is 981px: it fits from 1045px */
-  #bank .wide {
+  :is(#bank, table.known) .wide {
     display: none;
   }
-  #bank td.narrow, #bank th.narrow {
+  :is(#bank, table.known) td.narrow, :is(#bank, table.known) th.narrow {
     display: table-cell;
   }
-  #bank span.narrow {
+  :is(#bank, table.known) span.narrow {
     display: inline;
   }
-  #bank tr.details:not([hidden]) {
+  :is(#bank, table.known) tr.details:not([hidden]) {
     display: table-row;
   }
-  #bank tr.entry {
+  :is(#bank, table.known) tr.entry {
     cursor: pointer;
   }
-  #bank tr.entry:hover, #bank tr.entry[aria-expanded=true] {
+  :is(#bank, table.known) tr.entry:hover, :is(#bank, table.known) tr.entry[aria-expanded=true] {
     background-color: rgb(20, 20, 20);
   }
 }
 @media screen and (max-width: 600px) {
-  #bank dl {
+  :is(#bank, table.known) dl {
     grid-template-columns: 1fr; gap: 0 0; padding: 8px 4px;
   }
-  #bank dd {
+  :is(#bank, table.known) dd {
     margin-bottom: 6px;
   }
 }
@@ -184,7 +184,7 @@ h1 small {
   font-family: monospace;
 }
 /* documents rendered from Markdown (Architecture): sections, lists and tables */
-.doc h2 {
+h2 {
   font-size: 1.5rem; font-weight: 600; line-height: 1.25; margin: 40px 0 16px; padding-bottom: 0.3em;
   border-bottom: 1px solid rgb(20, 20, 20); color: white;
 }
@@ -267,4 +267,23 @@ ul > li::before {
   footer .indexlink br {
     display: none;
   }
+}
+/* the magazine: a dateline under the title, sections with counts, summaries that wrap */
+.dateline {
+  text-align: center; margin: -16px 0 24px; font: 1rem monospace; letter-spacing: 0.1em; text-transform: uppercase; color: rgb(220, 220, 220);
+}
+h2 .count {
+  font: 1rem monospace; color: rgb(220, 220, 220); margin-left: 8px;
+}
+:is(#bank, table.known) td.summary {  /* as specific as the no-wrap rule for wide columns, so summaries wrap */
+  white-space: normal; color: rgb(240, 240, 240);
+}
+table.known td.wide:first-child {
+  color: rgb(220, 220, 220);
+}
+.withdrawn {
+  font-size: 12px; color: rgb(220, 220, 220); border: 1px solid rgb(220, 220, 220); padding: 0 4px;
+}
+table.known tr.entry td:nth-child(2) {  /* an advisory identifier stays on one line */
+  white-space: nowrap;
 }
