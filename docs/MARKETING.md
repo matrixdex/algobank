@@ -40,7 +40,9 @@ Code is deposited by hash. It earns trust when it is vetted and runs without bre
 
 ```
 pip install algobank
-algobank diff requests 2.31.0 2.32.3
+pip download --no-deps --only-binary :all: -d wheels/ requests==2.31.0
+pip download --no-deps --only-binary :all: -d wheels/ requests==2.32.3
+algobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl
 ```
 
-`algobank diff` shows what changed between two releases of a package, and what that change can now reach, before you install it.
+`algobank diff` shows what changed between two releases of a package, and what that change can now reach, before you install it. Algobank itself has no network access and writes no files: it only reads the wheels you give it.

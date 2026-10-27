@@ -545,11 +545,21 @@ The theorems hold for any output that meets the checker's conditions (section 3.
 The diff tool, run as the `algobank` command, is the first product built on the core. For a Python package it answers two questions a developer or coding agent faces when adding or updating a dependency: what changed, and what can the package do now.
 
 ```
-algobank diff NAME OLD NEW [--json]
-algobank scope NAME VERSION [--json]
+algobank diff OLD NEW [--json]
+algobank scope FILE [--json]
 ```
 
-`OLD`, `NEW` and `VERSION` are PyPI versions or paths to local wheel or sdist files. The tool downloads a wheel (preferring a pure-Python wheel, otherwise a Linux x86-64 wheel, otherwise the sdist), checks it against PyPI's SHA-256, and reads it in memory. Nothing from the package is installed, imported or run.
+`OLD`, `NEW` and `FILE` are paths to wheel or sdist files. The tool reads each file in memory. Nothing from the package is installed, imported or run.
+
+**Scope of the tool itself.** Algobank has no network access and writes no files; its only power is reading the files it is given. Downloading is left to the package manager, which already has network access wherever packages can be installed:
+
+```
+pip download --only-binary :all: -d wheels/ NAME==VERSION     # the whole closure; add --no-deps for one package
+algobank scope wheels/<file>.whl                              # for each wheel
+pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly the files analyzed
+```
+
+`--only-binary :all:` matters: to read an sdist's metadata, pip runs its build backend, which executes package code during the download. Algobank cannot see that code, so every sdist is a high finding.
 
 **Findings.**
 
@@ -563,8 +573,9 @@ algobank scope NAME VERSION [--json]
 | New dependency, including test-only and optional ones: its code is not analyzed here, so its scope is unknown (`TOP`) | high |
 | New `file` scope, other new dynamic code (computed imports and attributes, `__getattr__`, `import *`), changed native binary, new entry point or installed script | medium |
 | Changed dependency range, new or changed data files | low |
+| Source distribution: building it runs the build backend and any `setup.py` (`TOP`) | high, in `scope` and `diff` |
 
-Exit status is 1 when any finding is high, 0 otherwise, and 2 on error, so the tool can gate a CI job. `--json` gives the same report for programs and agents. The report also states what it could not see: unparsed files, native binaries, and analysis from an sdist when no wheel exists.
+Exit status is 1 when any finding is high, 0 otherwise, and 2 on error, so the tool can gate a CI job. `--json` gives the same report for programs and agents. The report also states what it could not see: unparsed files and native binaries.
 
 **Validation.**
 
@@ -573,7 +584,8 @@ Exit status is 1 when any finding is high, 0 otherwise, and 2 on error, so the t
 | Synthetic wheels reproducing attack patterns: a `.pth` file with a module that reads the environment and uses the network (LiteLLM 1.107.0); an existing formatting function that starts using the network (chalk/debug); new `exec`; a new native binary; a new dependency | Each produces the expected high or medium finding (`test_diff.py`) |
 | A clean update of the same synthetic package, and a dependency range that changes only in formatting | No findings |
 | A new test-only dependency (`setuptools ; extra == 'testing'`) | High: optional dependencies bring unanalyzed code too |
-| Algobank's own wheel (`algobank scope algobank dist/...whl`) | `file` and `network`, both only in `fetch`, which downloads and caches wheels |
+| Algobank's own wheel (`algobank scope dist/algobank-0.1.0-py3-none-any.whl`) | `file`, only in `load`, which reads the one file it is given. No network, no other findings. |
+| Algobank's own sdist | High: building it runs `flit_core` |
 | Normal updates of popular packages: requests 2.31.0→2.32.3, urllib3 2.2.1→2.2.2, idna 3.6→3.7, rich 13.7.0→13.7.1, packaging 24.0→24.1 | Four have no medium or high findings. requests has one real change flagged high: a new computed import, run at import time, that selects a character-detection library. |
 | dexweb 4.2.2→4.2.3 | `process` reported as new, entering at `Dexweb.run_git` |
 
@@ -612,11 +624,12 @@ The wheels are parsed and never run.
 ```
 # install from the repository and run the diff tool
 pip install .
-algobank diff requests 2.31.0 2.32.3
+pip download --no-deps --only-binary :all: -d wheels/ requests==2.31.0
+pip download --no-deps --only-binary :all: -d wheels/ requests==2.32.3
+algobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl
 
 # diff tool tests
 python3.14 -I v0.1/test_diff.py
-python3.14 -m algobank diff requests 2.31.0 2.32.3
 
 # check the proofs
 cd v0.1/proofs && coqc -Q . Algobank CodeRoot.v && coqc -Q . Algobank MerkleSound.v
@@ -658,7 +671,7 @@ python3.14 -I v0.1/proofs/check_model.py
 7. Implement the admission gates as code.
 8. Run the release-history test on larger packages with many contributors.
 9. Evaluate the component tier for pure-Python parts with `componentize-py`.
-10. Take the diff tool to users: a GitHub Action that comments on pull requests changing `requirements.txt`, `uv.lock` or `poetry.lock`; a shared cache of reports keyed by artifact hash; and an MCP server for coding agents. Measure how often a finding leads to a change in a dependency or in the code.
+10. Take the diff tool to users: a GitHub Action that comments on pull requests changing `requirements.txt`, `uv.lock` or `poetry.lock`; a shared cache of reports for popular packages, keyed by artifact hash and shipped as package data, so lookups need no network; and an MCP server for coding agents that takes file paths and, like the command, has no network access and writes no files. Both are required before the diff tool ships to agents, and the MCP server must be algobanked, with its whole dependency closure, before it ships. Measure how often a finding leads to a change in a dependency or in the code.
 11. Continue proving the core on the front end, back end and checker split (section 3.8):
     1. Roll-up soundness and `TOP` propagation, with the matching conditions added to the checker.
     2. Reuse soundness: a result accepted for a hash stays valid wherever that hash appears.

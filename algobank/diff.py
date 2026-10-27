@@ -1,77 +1,46 @@
 """algobank diff: what changed in a Python package between two versions, and what it can do now.
 
 Usage:
-  algobank diff NAME OLD NEW [--json]
-  algobank scope NAME VERSION [--json]
+  algobank diff OLD NEW [--json]
+  algobank scope FILE [--json]
 
-OLD, NEW and VERSION are PyPI versions or paths to local wheel or sdist files.
+OLD, NEW and FILE are paths to wheel or sdist files, for example from
+  pip download --only-binary :all: -d wheels/ NAME==VERSION
 
-PyPI artifacts are downloaded, checked against PyPI's SHA-256, and read in memory.
+Algobank reads the files you give it, in memory. It has no network access and writes no files.
 Nothing from the package is installed, imported or run.
 
 Exit status: 0 no high-severity findings, 1 high-severity findings, 2 error.
 """
-import argparse, ast, hashlib, io, json, os, re, sys, tarfile, urllib.request, zipfile
+import argparse, ast, hashlib, io, json, os, re, sys, tarfile, zipfile
 
 from .pkgmerkle import Package, TOP
 
-CACHE = os.path.join(os.path.expanduser("~"), ".cache", "algobank")
 MAX_FILE = 50 * 2**20          # skip larger members
 MAX_TOTAL = 500 * 2**20        # stop reading an archive beyond this much uncompressed data
 HIGH_SCOPES = {"network", "process", "env", "native", TOP}
+SDIST_TEXT = ("source distribution: installing it runs its build backend and any setup.py, code not analyzed "
+              "here (TOP); pip runs that code to read the metadata even during pip download, so download "
+              "with --only-binary :all:")
 NATIVE_EXT = (".so", ".pyd", ".dylib", ".dll")
 DYN_FLAGS = {"dyn-import", "dyn-attr", "dyn-exec", "dyn-patch", "dyn-getattr-def", "star-import"}
 FLAG_TEXT = {"dyn-import": "import with a computed name", "dyn-attr": "attribute access with a computed name",
              "dyn-exec": "eval, exec or deserialization", "dyn-patch": "changes another module at run time",
              "dyn-getattr-def": "__getattr__ (attributes resolved at run time)", "star-import": "import *"}
 
-# ---- fetching -----------------------------------------------------------------
+# ---- reading ------------------------------------------------------------------
 
 class Artifact:
-    def __init__(self, label, filename, data):
-        self.label, self.filename, self.data = label, filename, data
+    def __init__(self, filename, data):
+        self.filename, self.data = filename, data
         self.sha256 = hashlib.sha256(data).hexdigest()
 
-def _pick(files):
-    wheels = [f for f in files if f["packagetype"] == "bdist_wheel"]
-    pure = [f for f in wheels if f["filename"].endswith("-none-any.whl")]
-    if pure: return pure[0]
-    if wheels:
-        linux = [f for f in wheels if "manylinux" in f["filename"] and "x86_64" in f["filename"]]
-        return (linux or sorted(wheels, key=lambda f: f["filename"]))[0]
-    sdists = [f for f in files if f["packagetype"] == "sdist"]
-    if sdists: return sdists[0]
-    raise SystemExit(f"error: no wheel or sdist published")
-
-def fetch(name, version):
-    if os.path.exists(version):
-        with open(version, "rb") as fh:
-            return Artifact(version, os.path.basename(version), fh.read())
-    if os.sep in version or version.endswith((".whl", ".tar.gz", ".zip")):
-        raise SystemExit(f"error: file not found: {version}")
-    url = f"https://pypi.org/pypi/{name}/{version}/json"
-    try:
-        with urllib.request.urlopen(url, timeout=60) as r:
-            meta = json.load(r)
-    except urllib.error.HTTPError as e:
-        raise SystemExit(f"error: {name} {version} not found on PyPI ({e.code})")
-    f = _pick(meta["urls"])
-    want = f["digests"]["sha256"]
-    path = os.path.join(CACHE, want + "-" + f["filename"])
-    data = None
-    if os.path.exists(path):
-        with open(path, "rb") as fh: data = fh.read()
-        if hashlib.sha256(data).hexdigest() != want: data = None
-    if data is None:
-        with urllib.request.urlopen(f["url"], timeout=120) as r:
-            data = r.read()
-        if hashlib.sha256(data).hexdigest() != want:
-            raise SystemExit(f"error: {f['filename']} does not match PyPI's SHA-256")
-        os.makedirs(CACHE, exist_ok=True)
-        with open(path, "wb") as fh: fh.write(data)
-    return Artifact(f"{name} {version}", f["filename"], data)
-
-# ---- reading ------------------------------------------------------------------
+def load(path):
+    """The only place Algobank touches the file system: it reads the one file it is given."""
+    if not os.path.isfile(path):
+        raise SystemExit(f"error: file not found: {path}")
+    with open(path, "rb") as fh:
+        return Artifact(os.path.basename(path), fh.read())
 
 def read_members(art):
     """{path: bytes} for regular files, plus notes about anything skipped. Nothing is extracted to disk."""
@@ -109,7 +78,7 @@ def requires(members):
         deps[m.group(1).lower().replace("-", "_")] = spec or "any version"
     return deps
 
-def hooks(members, is_wheel):
+def hooks(members):
     """Code that runs without the package being imported."""
     found = {}
     for path in members:
@@ -121,8 +90,6 @@ def hooks(members, is_wheel):
             found[path] = "runs on every Python start"
         elif re.match(r"[^/]+\.data/scripts/", path):
             found[path] = "script installed on PATH"
-        elif not is_wheel and path in ("setup.py",):
-            found[path] = "runs when the package is built from source"
     return found
 
 def entry_points(members):
@@ -153,7 +120,7 @@ def analyze(art):
     natives = {p: hashlib.sha256(d).hexdigest() for p, d in members.items() if p.endswith(NATIVE_EXT)}
     other = {p: hashlib.sha256(d).hexdigest() for p, d in members.items()
              if not p.endswith(".py") and p not in natives and ".dist-info/" not in p}
-    return dict(art=art, pkg=pkg, deps=deps, hooks=hooks(members, is_wheel), entry_points=entry_points(members),
+    return dict(art=art, pkg=pkg, deps=deps, hooks=hooks(members), entry_points=entry_points(members),
                 natives=natives, other=other, unparsed=unparsed, notes=notes, is_wheel=is_wheel)
 
 # ---- reporting ----------------------------------------------------------------
@@ -177,6 +144,8 @@ def scope_report(a):
     for path, why in sorted(a["hooks"].items()):
         sev = "high" if "Python start" in why else "medium"
         f.append(finding(sev, "hook", f"{path}: {why}"))
+    if not a["is_wheel"]:
+        f.append(finding("high", "sdist", SDIST_TEXT))
     for s in sorted(set().union(*[n["direct_caps"] for n in pkg.nodes.values()]) if pkg.nodes else []):
         users = [k for k, n in pkg.nodes.items() if s in n["direct_caps"]]
         f.append(finding("info", "scope", f"uses {s}", users))
@@ -191,7 +160,6 @@ def scope_report(a):
 
 def coverage(a):
     c = []
-    if not a["is_wheel"]: c.append("no wheel published; analyzed the sdist")
     if a["unparsed"]: c.append(f"{len(a['unparsed'])} Python files could not be parsed")
     if a["natives"]: c.append(f"{len(a['natives'])} native binaries are not analyzed")
     c.extend(a["notes"])
@@ -207,6 +175,8 @@ def diff_report(a, b):
                  and p.nodes[k]["merkle"] != q.nodes[k]["merkle"]]
     added = [k for k in q.nodes if k not in p.nodes]
     removed = [k for k in p.nodes if k not in q.nodes]
+    if not b["is_wheel"]:
+        f.append(finding("high", "sdist", SDIST_TEXT))
     # hooks
     for path, why in sorted(b["hooks"].items()):
         if path not in a["hooks"]:
@@ -279,9 +249,9 @@ def show_findings(fs):
         nodes = ", ".join(x["nodes"]) + (f", and {x['more']} more" if x["more"] else "")
         print(f"  [{x['severity']}] {x['text']}" + (f"\n         {nodes}" if nodes else ""))
 
-def print_diff(name, r):
+def print_diff(r):
     n = r["nodes"]
-    print(f"{name}: {r['old']['artifact']} -> {r['new']['artifact']}")
+    print(f"{r['old']['artifact']} -> {r['new']['artifact']}")
     print(f"  nodes (functions, classes, module values): {n['total']} ({n['unchanged']} unchanged, {n['code_changed']} code changed, "
           f"{n['dependency_changed']} affected by a changed dependency, {n['added']} added, {n['removed']} removed)")
     print(f"  scope: {', '.join(r['scope']['old']) or 'none'} -> {', '.join(r['scope']['new']) or 'none'}")
@@ -291,8 +261,8 @@ def print_diff(name, r):
         print("findings: none")
     for c in r["coverage"]: print(f"  note: {c}")
 
-def print_scope(name, r):
-    print(f"{name}: {r['artifact']}  ({r['nodes']} nodes)")
+def print_scope(r):
+    print(f"{r['artifact']}  ({r['nodes']} nodes)")
     print(f"  scope: {', '.join(r['scope']) or 'none'}")
     for m, s in r["modules"].items():
         if s: print(f"    {m}: {', '.join(s)}")
@@ -305,18 +275,18 @@ def print_scope(name, r):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="algobank", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    d = sub.add_parser("diff"); d.add_argument("name"); d.add_argument("old"); d.add_argument("new")
-    s = sub.add_parser("scope"); s.add_argument("name"); s.add_argument("version")
+    d = sub.add_parser("diff"); d.add_argument("old"); d.add_argument("new")
+    s = sub.add_parser("scope"); s.add_argument("file")
     for x in (d, s): x.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
     sys.setrecursionlimit(20000)
     try:
         if args.cmd == "diff":
-            r = diff_report(analyze(fetch(args.name, args.old)), analyze(fetch(args.name, args.new)))
-            print(json.dumps(r, indent=2)) if args.json else print_diff(args.name, r)
+            r = diff_report(analyze(load(args.old)), analyze(load(args.new)))
+            print(json.dumps(r, indent=2)) if args.json else print_diff(r)
         else:
-            r = scope_report(analyze(fetch(args.name, args.version)))
-            print(json.dumps(r, indent=2)) if args.json else print_scope(args.name, r)
+            r = scope_report(analyze(load(args.file)))
+            print(json.dumps(r, indent=2)) if args.json else print_scope(r)
     except SystemExit as e:
         if isinstance(e.code, str):
             print(e.code, file=sys.stderr); return 2

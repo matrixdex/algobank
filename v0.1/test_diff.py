@@ -23,8 +23,8 @@ def wheel(tmp, version, files, meta=None):
 
 def run_diff(old_files, new_files, new_meta=None):
     with tempfile.TemporaryDirectory() as tmp:
-        a = ad.analyze(ad.fetch("demo", wheel(tmp, "1.0", old_files)))
-        b = ad.analyze(ad.fetch("demo", wheel(tmp, "1.1", new_files, new_meta)))
+        a = ad.analyze(ad.load(wheel(tmp, "1.0", old_files)))
+        b = ad.analyze(ad.load(wheel(tmp, "1.1", new_files, new_meta)))
         return ad.diff_report(a, b)
 
 def high(r): return [x for x in r["findings"] if x["severity"] == "high"]
@@ -88,9 +88,33 @@ def test_exit_status():
     with tempfile.TemporaryDirectory() as tmp:
         old = wheel(tmp, "1.0", BASE)
         hooked = wheel(tmp, "1.1", dict(BASE, **{"x.pth": "import demo\n"}))
-        assert ad.main(["diff", "demo", old, old]) == 0
-        assert ad.main(["diff", "demo", old, hooked]) == 1
-        assert ad.main(["diff", "demo", old, os.path.join(tmp, "missing.whl")]) == 2
+        assert ad.main(["diff", old, old]) == 0
+        assert ad.main(["diff", old, hooked]) == 1
+        assert ad.main(["diff", old, os.path.join(tmp, "missing.whl")]) == 2
+        assert ad.main(["scope", old]) == 0
+
+def test_sdist_is_high():
+    """Installing an sdist runs its build backend, and pip download runs it to read the metadata."""
+    import io, tarfile
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "demo-1.1.tar.gz")
+        with tarfile.open(path, "w:gz") as t:
+            for name, data in dict(BASE, **{"PKG-INFO": META.format(v="1.1")}).items():
+                info = tarfile.TarInfo("demo-1.1/" + name); info.size = len(data.encode())
+                t.addfile(info, io.BytesIO(data.encode()))
+        r = ad.scope_report(ad.analyze(ad.load(path)))
+        assert any(x["kind"] == "sdist" and "TOP" in x["text"] for x in high(r))
+        assert ad.main(["scope", path]) == 1
+
+def test_no_network_no_writes():
+    """Algobank's own scope: it only reads the files it is given."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    files = {}
+    for f in ("__init__.py", "__main__.py", "diff.py", "pkgmerkle.py"):
+        with open(os.path.join(root, "algobank", f)) as fh:
+            files["algobank/" + f] = fh.read()
+    scope = set(ad.Package(files).scope())
+    assert scope <= {"file"}, scope
 
 if __name__ == "__main__":
     import contextlib, io

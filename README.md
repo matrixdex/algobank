@@ -9,11 +9,19 @@ Before you or your coding agent add or update a dependency, see what changed and
 
 ```
 pip install algobank
-algobank diff requests 2.31.0 2.32.3
-algobank scope requests 2.32.3
+pip download --no-deps --only-binary :all: -d wheels/ requests==2.31.0
+pip download --no-deps --only-binary :all: -d wheels/ requests==2.32.3
+algobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl
+algobank scope wheels/requests-2.32.3-py3-none-any.whl
 ```
 
-`algobank diff` downloads both versions from PyPI, checks them against PyPI's SHA-256, and reads them in memory. Nothing from the package is installed, imported or run. It reports, by severity:
+Algobank has no network access and writes no files. It reads only the wheel or sdist files you give it, in memory. Nothing from the package is installed, imported or run. Your package manager does the downloading: pip already has network access wherever packages can be installed.
+
+Use `--only-binary :all:`. Without it, pip may download an sdist, and pip runs an sdist's build backend to read its metadata, which executes the package's code before Algobank sees it. Algobank reports any sdist as high for this reason.
+
+To vet a whole dependency closure, leave out `--no-deps`, analyze every downloaded wheel, then install exactly those files: `pip install --no-index --find-links wheels/ NAME==VERSION`.
+
+It reports, by severity:
 
 - files that run on every Python start (`.pth`, `sitecustomize.py`)
 - new powers (network, process, environment, native code, `TOP`) and where they enter
@@ -21,7 +29,7 @@ algobank scope requests 2.32.3
 - new native binaries, which it cannot analyze
 - new dependencies, whose code it does not analyze, so their scope is unknown
 
-Arguments can also be paths to local wheel or sdist files. Add `--json` for programs and agents. The exit status is 1 when a finding is high, so it can gate CI.
+Add `--json` for programs and agents. The exit status is 1 when a finding is high, so it can gate CI.
 
 The report is a signal for review, not a guarantee: static analysis can be evaded, and native code is not analyzed.
 
