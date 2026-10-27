@@ -171,8 +171,15 @@ h1 small {
   margin-left: auto; font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; color: rgb(220, 220, 220);
 }
 .findings ul {
-  margin: 0; padding-left: 1.25em;
+  margin: 0; padding: 0; list-style: none;
 }
 .findings li {
-  margin: 6px 0;
+  position: relative; margin: 8px 0; padding-left: 32px;
 }
+.findings li::before {  /* a band in the severity's color in place of a bullet */
+  content: ""; position: absolute; left: 0; top: 0.72em; width: 18px; height: 4px; border-radius: 2px;
+}
+.findings [data-sev=high] li::before { background-color: #ff4141; }
+.findings [data-sev=warning] li::before, .findings [data-sev=medium] li::before { background-color: #ffd700; }
+.findings [data-sev=low] li::before { background-color: #00ff41; }
+.findings [data-sev=info] li::before { background-color: rgb(220, 220, 220); }
