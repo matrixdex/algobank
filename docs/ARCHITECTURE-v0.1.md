@@ -55,7 +55,7 @@ Banking and insurance (vouches, deposits, penalties, interest, payouts) sit on t
 | Term | Meaning |
 |---|---|
 | **Package** | A set of source files analyzed together. One package has one code Merkle tree. |
-| **Algobanking** | Running Algobank on code, computing its code Merkle tree and scope and checking the result, and saving the report in Algobank, keyed by the code's hash. An algobanked package has been analyzed and its report stored. Findings do not block algobanking; they are part of the stored report. |
+| **Algobanking** | Running Algobank on code, computing its code Merkle tree and scope and checking the result, and saving the code in Algobank, keyed by its hash. What is saved is code, not a verdict: anyone can run Algobank on it again, and every check reruns (principle 9). Algobank is the first algobanked code: it has algobanked itself. Findings do not block algobanking. |
 | **Codegen** | An AI coding agent. |
 | **Part** | A package admitted to the garden. The unit that is confined and run. |
 | **Node** | A function or method (`module:qualname`), a module's top-level code (`module:<module>`), or a module value (`module:=name`). |

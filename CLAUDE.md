@@ -28,7 +28,7 @@ Data that agents read ships as code or as published records that code evaluates 
 
 ## Terms
 
-- **Algobanking**: running Algobank on code (code Merkle tree, scope, checks) and saving the result in Algobank, keyed by the code's hash. An algobanked package has been analyzed and its report stored. Findings do not block algobanking: a package with native binaries is algobanked with those binaries flagged to be checked separately.
+- **Algobanking**: running Algobank on code (code Merkle tree, scope, checks) and saving the code in Algobank, keyed by its hash. What is saved is code, not a verdict: anyone can run Algobank on it again, and every check reruns (asymmetry rule). Algobank is the first algobanked code: it has algobanked itself. Findings do not block algobanking: a package with native binaries is algobanked with those binaries flagged to be checked separately.
 - **Codegen**: anything that writes or runs code: AI coding agents, GitHub Actions and other CI runners, package managers and build systems, and human maintainers. Findings are feedback that helps codegens write better code.
 
 ## Repository conventions
