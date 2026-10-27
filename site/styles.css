@@ -56,7 +56,7 @@ img {
 #q {
   width: 100%; box-sizing: border-box; margin: 0 0 8px; padding: 10px 12px;
   font: 16px monospace;
-  color: rgb(240, 240, 240); background-color: rgb(20, 20, 20); border: 1px solid rgb(220, 220, 220); border-radius: 6px;
+  color: rgb(240, 240, 240); background-color: rgb(20, 20, 20); border: 1px solid #00ff41; border-radius: 0;
 }
 #q:focus {
   outline: none; border-color: #00ff41;
