@@ -93,3 +93,9 @@ footer h3 {
 footer nav {
   margin-top: 0;
 }
+.index h1, #q::placeholder {
+  text-align: center;
+}
+footer nav {
+  text-align: right;  /* the page links; the algobank link above them stays left */
+}
