@@ -10,6 +10,9 @@
 document.addEventListener("DOMContentLoaded", () => {
   const q = document.getElementById("q"), msg = document.getElementById("msg");
   if (!q) return;                                                    // only the Bank page has a search bar
+  const phone = matchMedia("(max-width: 600px)"), full = q.placeholder;   // the same width as the phone styles
+  const placeholder = () => q.placeholder = phone.matches ? q.dataset.phone : full;
+  placeholder(); phone.addEventListener("change", placeholder);
   const rows = [...document.querySelectorAll("#bank tbody tr")];
   const norm = s => s.toLowerCase().replace(/[-_.]+/g, "-");          // PEP 503 package names
   function search() {
