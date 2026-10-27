@@ -6,5 +6,11 @@
     "page_javascript": "",
     "index_javascript": "",
     "index_list_type_para": true,
-    "index_list_no_page_link_only": false
+    "index_list_no_page_link_only": false,
+    "publish": {
+        "method": "git",
+        "dest": "https://github.com/matrixdex/algobank",
+        "branch": "web",
+        "message": "Publish {}"
+    }
 }

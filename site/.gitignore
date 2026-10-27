@@ -1,3 +1,4 @@
 gen/
 backup/
 to_add/
+.publish/

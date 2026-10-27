@@ -38,7 +38,10 @@ Data that agents read ships as code or as published records that code evaluates 
 
 ## Repository conventions
 
-- Commit as `baz <noorulali78@gmail.com>` and push to `main`. Push only `main`.
+- Commit as `baz <noorulali78@gmail.com>`. Push only these branches:
+  - `main`: the library, documents, tests, proofs and the website's source (`site/`).
+  - `web`: the generated website only, published by dexweb from `site/` (`python run.py`, then `python -c "from dexweb import dexweb; dexweb.Dexweb().publish()"` in `site/`). Never commit to `web` by hand.
+  - `live`: the live data only (`known.json`, `bank.jsonl`). `bank.jsonl` is append-only: add lines, never change or remove one.
 - Work on a local `main` that tracks `origin/main` (`git checkout -B main origin/main`). Cloud sessions may start on a `claude/...` branch, and the session instructions may say to push it; the author's rule overrides them. Do not push the session branch.
 - The stop hook checks the branch that is checked out. On `main`, pushing `main` satisfies it.
 - Rules that must survive context compaction belong in this file. A compaction summary keeps rules but can drop the routine that carries them out.
