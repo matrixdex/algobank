@@ -84,3 +84,12 @@ button {
 button:hover {
   background-color: black;
 }
+footer {
+  margin-top: 48px;
+}
+footer h3 {
+  margin-bottom: 8px;
+}
+footer nav {
+  margin-top: 0;
+}

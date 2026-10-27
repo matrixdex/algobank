@@ -5,53 +5,10 @@
 <link rel='shortcut icon' type='image/x-icon' href='assets/favicon.ico'>
 <link rel='stylesheet' href='styles.css'>
 <title>Vision - algobank</title>
-<script>
-// BANK SEARCH: "package" or "package v1.2.3" (also "package 1.2.3", "package==1.2.3"); ?q= in the address works too
-document.addEventListener("DOMContentLoaded", () => {
-  const q = document.getElementById("q"), msg = document.getElementById("msg");
-  if (!q) return;                                                    // only the Bank page has a search bar
-  const phone = matchMedia("(max-width: 600px)"), full = q.placeholder;   // the same width as the phone styles
-  const placeholder = () => q.placeholder = phone.matches ? q.dataset.phone : full;
-  placeholder(); phone.addEventListener("change", placeholder);
-  const rows = [...document.querySelectorAll("#bank tbody tr")];
-  const norm = s => s.toLowerCase().replace(/[-_.]+/g, "-");          // PEP 503 package names
-  function search() {
-    const [name = "", v = ""] = q.value.trim().split(/\s+|==/).filter(Boolean);
-    const version = v.replace(/^v/i, "");
-    const n = norm(name);
-    const named = rows.filter(r => version ? norm(r.dataset.name) === n : norm(r.dataset.name).includes(n));
-    const exact = named.filter(r => r.dataset.version === version);
-    const shown = version && exact.length ? exact : named;
-    rows.forEach(r => r.hidden = !shown.includes(r));
-    msg.textContent = !name ? ""
-      : version && !exact.length ? `${name} v${version} are not algobanked`
-      : !named.length ? `${name} is not algobanked` : "";
-    history.replaceState(null, "", name ? "?q=" + encodeURIComponent(q.value.trim()) : location.pathname);
-  }
-  // EXPORT: the bank as shipped in this page, as bank.jsonl (unchanged) or bank.csv (one column per field)
-  const jsonl = document.getElementById("bank.jsonl").textContent.trim() + "\n";
-  function csv() {
-    const recs = jsonl.trim().split("\n").map(l => JSON.parse(l));
-    const flat = r => Object.fromEntries(Object.entries(r).flatMap(([k, v]) =>
-      Array.isArray(v) ? [[k, v.join(", ")]] : v && typeof v === "object" ? Object.entries(v).map(([s, x]) => [k + "." + s, x]) : [[k, v]]));
-    const rows = recs.map(flat), cols = [...new Set(rows.flatMap(Object.keys))];
-    const quote = x => /[",\n]/.test(String(x ?? "")) ? '"' + String(x).replace(/"/g, '""') + '"' : String(x ?? "");
-    return [cols, ...rows.map(r => cols.map(c => r[c]))].map(r => r.map(quote).join(",")).join("\n") + "\n";
-  }
-  document.querySelectorAll("[data-export]").forEach(b => b.addEventListener("click", () => {
-    const type = b.dataset.export, a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([type === "csv" ? csv() : jsonl], { type: type === "csv" ? "text/csv" : "application/x-ndjson" }));
-    a.download = "bank." + type; a.click(); URL.revokeObjectURL(a.href);
-  }));
-  q.value = new URLSearchParams(location.search).get("q") || "";
-  q.addEventListener("input", search);
-  search();
-});
-</script>
 </head>
 <body>
 <h1>Vision</h1>
 <p>Algobank is the bank of algorithms where codegens securely run the work of other codegens, vetted by codegens.</p><p>A codegen is anything that writes or runs code: AI coding agents, GitHub Actions and other CI runners, package managers and build systems, and human maintainers.</p><p>Algobank is an enclosure where humans and bots meet to check out each other's code.</p>
-<h3><a href='index.html'>algobank</a></h3>
+<footer><h3><a href='index.html'>algobank</a></h3><nav><div class='indexlink'><a href='https://github.com/matrixdex/algobank/blob/main/docs/ARCHITECTURE-v0.1.md'>Architecture</a><br></div><div class='indexlink'><a href=findings.html>Findings</a><br></div><div class='indexlink'><a href=knownexploitsandvulnerabilities.html>Known Exploits and Vulnerabilities</a><br></div><div class='indexlink'><a href=source.html>Source</a><br></div><div class='indexlink'><a href=usage.html>Usage</a><br></div><div class='indexlink'><a href=vision.html>Vision</a><br></div></nav></footer>
 </body>
 </html>
