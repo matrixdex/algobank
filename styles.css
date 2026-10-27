@@ -12,7 +12,7 @@ body {
 }
 h1 {
   font-family: 'Italiana', serif; font-weight: 400; letter-spacing: 0.05em; font-size: 3rem; line-height: 1.25;
-  margin: 0 0 24px; padding-bottom: 0.3em; border-bottom: 1px solid rgb(220, 220, 220);
+  margin: 0 0 24px;
 }
 footer h3 {
   font-family: 'Italiana', serif; font-weight: 400; letter-spacing: 0.05em; font-size: 1.5rem;
@@ -64,18 +64,58 @@ img {
 #msg:not(:empty) {
   margin: 8px 0 16px; font-family: monospace; color: #ff4141;  /* "... not algobanked" is red */
 }
-.scroll {
-  overflow-x: auto; max-width: 100%; margin: 16px 0;
-}
 #bank {
-  border-collapse: collapse; font: 14px monospace;
-  color: rgb(220, 220, 220); white-space: nowrap; overflow-wrap: normal; margin: 0;
+  width: 100%; border-collapse: collapse; font: 14px monospace; color: rgb(220, 220, 220); margin: 0 0 16px;
 }
 #bank th, #bank td {
-  text-align: left; padding: 6px 16px 6px 0; border-bottom: 1px solid rgb(20, 20, 20);
+  text-align: left; padding: 6px 16px 6px 0;
 }
 #bank th {
-  color: white; font-weight: 400; border-bottom-color: rgb(220, 220, 220);
+  color: white; font-weight: 400; border-bottom: 1px solid rgb(220, 220, 220);
+}
+#bank tbody {
+  border-bottom: 1px solid rgb(20, 20, 20);
+}
+#bank td.pkg {
+  overflow-wrap: anywhere;
+}
+#bank tr.entry {
+  cursor: pointer;
+}
+#bank tr.entry:hover, #bank tr.entry[aria-expanded=true] {
+  background-color: rgb(20, 20, 20);
+}
+#bank tr.entry:focus-visible {
+  outline: 1px solid #00ff41;
+}
+#bank tr.details td {
+  padding: 4px 0 12px;
+}
+#bank dl {  /* the record's details: a label column and a value column */
+  display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; padding: 8px 12px;
+}
+#bank dt {
+  color: white;
+}
+#bank dd {
+  margin: 0; overflow-wrap: anywhere;
+}
+#bank dd code {
+  padding: 0; background: none; font-size: 100%;
+}
+button.copy {
+  font-size: 12px; padding: 1px 8px; margin: 0 0 0 8px; border-radius: 0;
+}
+@media screen and (max-width: 600px) {  /* phones: package and findings only; the scope is in the details */
+  #bank .scope {
+    display: none;
+  }
+  #bank dl {
+    grid-template-columns: 1fr; gap: 0 0; padding: 8px 4px;
+  }
+  #bank dd {
+    margin-bottom: 6px;
+  }
 }
 button {
   font: 14px monospace; cursor: pointer;
