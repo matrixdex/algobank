@@ -38,8 +38,8 @@
     {
         "title": "Source",
         "body": [
-            "<a href='https://github.com/matrixdex/algobank'>github.com/matrixdex/algobank</a>: the library on <code>main</code>, this website on <code>web</code>, the live data on <code>live</code>.",
-            "<a href='https://github.com/matrixdex/algobank/issues'>Issues</a>"
+            "Repository: <a href='https://github.com/matrixdex/algobank'>github.com/matrixdex/algobank</a><br>Branch main: library core<br>Branch web: this website<br>Branch live: algobank live data source",
+            "Issues: Raise issues here (<a href='https://github.com/matrixdex/algobank/issues'>https://github.com/matrixdex/algobank/issues</a>)"
         ]
     },
     {
