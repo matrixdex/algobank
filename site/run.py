@@ -121,9 +121,10 @@ vul = [x for x in index if x["kind"] == "vulnerability"]
 head = "<thead><tr><th class='wide'>published</th><th>advisory</th><th>package</th><th class='wide'>fixed in</th><th class='wide'>summary</th></tr></thead>"
 open_slots = sum(1 for s_ in slot_list if s_["package"] not in admitted)
 magazine = (
-    f"<p class='dateline'>as of {esc(known['date'])} · {len(index)} advisories · {len(slots)} packages · {open_slots} open slots</p>"
     "<input id='q' type='text' placeholder='Search package or advisory (for example, django or PYSEC-2026-1872)' data-phone='Search' aria-label='Search known exploits and vulnerabilities' autocomplete='off' spellcheck='false'>"
     "<div id='msg' role='status'></div>"
+    f"<p class='dateline'><span>Dated: {esc(known['date'])}</span><span>Packages: {len(slots)}</span>"
+    f"<span>Advisories: {len(index)}</span><span>Open: {open_slots}</span></p>"
     f"<h2>Malicious releases <span class='count'>{len(mal)}</span></h2><table class='known'>{head}{advisory_rows(mal)}</table>"
     f"<h2>Vulnerabilities <span class='count'>{len(vul)}</span></h2><table class='known'>{head}{advisory_rows(vul)}</table>"
     f"<h2>Open slots <span class='count'>{open_slots}</span></h2><table class='known slots'><thead><tr><th>package</th><th>advisories</th>"

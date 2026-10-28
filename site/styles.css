@@ -269,8 +269,8 @@ ul > li::before {
   }
 }
 /* the magazine: a dateline under the title, sections with counts, summaries that wrap */
-.dateline {
-  text-align: center; margin: -16px 0 24px; font: 1rem monospace; letter-spacing: 0.1em; text-transform: uppercase; color: rgb(220, 220, 220);
+.dateline {  /* Dated, Packages, Advisories, Open: one row, a tab's width apart; it wraps on phones */
+  display: flex; flex-wrap: wrap; column-gap: 4ch; row-gap: 4px; margin: 16px 0 0; font: 1rem monospace; color: rgb(220, 220, 220);
 }
 h2 .count {
   font: 1rem monospace; color: rgb(220, 220, 220); margin-left: 8px;
