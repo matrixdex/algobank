@@ -298,28 +298,20 @@ header.top {
   position: relative;
 }
 header.top h1 {
-  padding: 0 6.5rem;  /* the same on both sides, so the title stays centered and never runs into the link */
+  padding: 0 3rem;  /* the same on both sides, so the title stays centered and never runs into the arrow */
 }
-a.back {  /* a control like the search box and the buttons: monospace, a thin green border, square corners */
-  position: absolute; left: 0; top: 1.875rem; transform: translateY(-50%);  /* centered on the title's first line */
-  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px;
-  font: 13px monospace; letter-spacing: 0.12em; text-transform: uppercase; text-decoration: none;
-  color: #00ff41; border: 1px solid #00ff41; border-radius: 0; background-color: rgb(20, 20, 20);
-}
-a.back span[aria-hidden] {  /* the arrow, a little larger than the label */
-  font-size: 1.4em; line-height: 1;
+a.back {  /* the arrow back to the homepage: green Arial, no border */
+  position: absolute; left: 0; top: 0; text-decoration: none;
+  font: 600 2.5rem Arial, sans-serif; line-height: 3.75rem;  /* the height of the title's first line */
 }
 a.back:hover, a.back:focus-visible {
-  color: black; background-color: #00ff41; text-decoration: none; outline: none;
+  text-decoration: none; color: white;
 }
-@media screen and (max-width: 600px) {  /* phones: the arrow only, in a square */
+@media screen and (max-width: 600px) {
   a.back {
-    top: 1.40625rem; width: 34px; height: 34px; padding: 0; justify-content: center; font-size: 16px; letter-spacing: 0;
-  }
-  a.back .label {
-    display: none;
+    line-height: 2.8125rem;
   }
   header.top h1 {
-    padding: 0 2.75rem;
+    padding: 0 2rem;
   }
 }
