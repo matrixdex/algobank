@@ -316,3 +316,9 @@ a.back:hover, a.back:focus-visible {
     padding: 0 2rem;
   }
 }
+ul.plain > li {  /* a list with no markers at all (Limits) */
+  padding-left: 0; margin: 12px 0;
+}
+ul.plain > li::before {
+  content: none;
+}
