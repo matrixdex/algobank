@@ -303,6 +303,7 @@ header.top h1 {
 a.back {  /* the arrow back to the homepage: green Arial, no border */
   position: absolute; left: 0; top: 0; text-decoration: none;
   font: 600 2.5rem Arial, sans-serif; line-height: 3.75rem;  /* the height of the title's first line */
+  -webkit-text-stroke: 2px currentColor;  /* doubles the arrow's 2px shaft to 4px */
 }
 a.back:hover, a.back:focus-visible {
   text-decoration: none; color: white;
