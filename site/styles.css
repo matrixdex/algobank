@@ -291,7 +291,7 @@ table.known tr.entry td:nth-child(2) {  /* an advisory identifier stays on one l
   white-space: nowrap;
 }
 .claim {  /* the one claim algobank makes */
-  font-size: 1.15rem; color: white; border-left: 4px solid #00ff41; padding: 4px 0 4px 16px;
+  font-size: 1.15rem; color: white;
 }
 /* the link back to the homepage: on the title's line, at its left; the title stays centered */
 header.top {
