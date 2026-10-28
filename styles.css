@@ -231,16 +231,18 @@ h2 {
 .exit {
   margin-left: auto; font: 14px monospace; color: rgb(220, 220, 220);
 }
-/* no bullets anywhere: every unordered list item starts with a band, light gray or in its severity's color */
+/* no bullets anywhere; only Findings marks its items, with a band in the severity's color */
 ul {
   list-style: none; padding-left: 0;
 }
 ul > li {
-  position: relative; margin: 8px 0; padding-left: 32px;
+  margin: 8px 0;
 }
-ul > li::before {
+.findings ul > li {
+  position: relative; padding-left: 32px;
+}
+.findings ul > li::before {
   content: ""; position: absolute; left: 0; top: 0.72em; width: 18px; height: 4px; border-radius: 2px;
-  background-color: rgb(220, 220, 220);
 }
 .findings ul {
   margin: 0;
@@ -316,9 +318,6 @@ a.back:hover, a.back:focus-visible {
     padding: 0 2rem;
   }
 }
-ul.plain > li {  /* a list with no markers at all (Limits) */
-  padding-left: 0; margin: 12px 0;
-}
-ul.plain > li::before {
-  content: none;
+ul.plain > li {  /* Limits: a little more space between items */
+  margin: 12px 0;
 }
