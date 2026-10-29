@@ -908,7 +908,7 @@ Each website is a dex. dexweb builds it. `python run.py` in `site/` writes the w
 
 - A search bar. It takes `package` or `package v1.2.3`. A link can carry `?q=`.
 - A message for a version that is not in the bank: `package v1.2.3 are not algobanked`. The admitted versions of the package show below it.
-- The records as a table. On wide screens (1,045 pixels and wider), each field has its own column. On narrower screens, the table shows the package and its findings. A click on an entry opens all of its fields below it.
+- The records as a table. The newest admitted record comes first. On wide screens (1,045 pixels and wider), each field has its own column. On narrower screens, the table shows the package and its findings. A click on an entry opens all of its fields below it.
 - Each hash as its first eight characters. A button copies the full hash.
 - Buttons that export the bank as JSONL or CSV. The JSONL is the file without changes. The CSV has one column for each field.
 - The lines of the file without changes, in a `<script type='application/x-ndjson' id='bank.jsonl'>` block for codegens.

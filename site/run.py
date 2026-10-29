@@ -38,7 +38,7 @@ rows = "".join(                                             # one tbody per reco
     f"<td class='wide'>{esc(r['admitted'])}</td><td class='wide'>{short(r['sha256']) if r.get('sha256') else ''}</td>"
     f"<td class='wide'>{short(r['code_root'])}</td><td class='narrow'>{findings(r['findings'])}</td></tr>"
     f"<tr class='details' hidden><td colspan='10'>{details(r)}</td></tr></tbody>"
-    for r in records)
+    for _, r in sorted(enumerate(records), key=lambda x: (x[1]["admitted"], x[0]), reverse=True))  # newest admitted first; same day: last added first
 page = (
     "<input id='q' type='text' placeholder='Search package in algobank (for example, dexweb v4.2.0)' data-phone='Search algobank' aria-label='Search the bank' autocomplete='off' spellcheck='false'>\n"
     "<div id='msg' role='status'></div>\n"
