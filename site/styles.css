@@ -323,6 +323,9 @@ a.back:hover, a.back:focus-visible {
     padding: 0 2.5rem;  /* the arrow's width */
   }
 }
+p:has(+ p:empty + pre) {  /* Usage: the plain-text heading above each code block */
+  color: #00ff41;
+}
 ul.plain > li {  /* Limits: a little more space between items */
   margin: 12px 0;
 }
