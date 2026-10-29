@@ -15,7 +15,8 @@ h1 {
   margin: 0 0 24px;
 }
 header.top h1 {  /* page titles are Arial; Italiana is only the name algobank, on the homepage and in the footer */
-  font-family: Arial, sans-serif; font-weight: 400; letter-spacing: normal; text-transform: uppercase;
+  font-family: Arial, sans-serif; font-weight: 400; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: 2.4rem;  /* 20% smaller than the homepage title */
 }
 footer h3 {
   font-family: 'Italiana', serif; font-weight: 400; letter-spacing: 0.05em; font-size: 1.5rem;
@@ -54,6 +55,7 @@ img {
 @media screen and (max-width: 600px) {
   body { padding: 16px 16px 48px; font-size: 16px; }
   h1 { font-size: 2.25rem; }
+  header.top h1 { font-size: 1.8rem; }
 }
 /* bank: a search bar and the records, in monospace for fast reading */
 #q {
@@ -307,7 +309,7 @@ header.top h1 {
 }
 a.back {  /* the arrow back to the homepage: green Arial, no border */
   position: absolute; left: 0; top: 0; text-decoration: none;
-  font: 600 2.5rem Arial, sans-serif; line-height: 3.75rem;  /* the height of the title's first line */
+  font: 600 2.5rem Arial, sans-serif; line-height: 3rem;  /* the height of the title's first line */
   -webkit-text-stroke: 2px currentColor;  /* doubles the arrow's 2px shaft to 4px */
 }
 a.back:hover, a.back:focus-visible {
@@ -315,10 +317,10 @@ a.back:hover, a.back:focus-visible {
 }
 @media screen and (max-width: 600px) {
   a.back {
-    line-height: 2.8125rem;
+    line-height: 2.25rem;
   }
   header.top h1 {
-    padding: 0 2rem;
+    padding: 0 2.5rem;  /* the arrow's width */
   }
 }
 ul.plain > li {  /* Limits: a little more space between items */
