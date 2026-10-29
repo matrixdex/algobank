@@ -4,32 +4,36 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "algobank"
-version = "0.1.0"
-description = "See what changed in a Python package between two versions, and what it can do now."
+version = "1.0.0"
+description = "algobank computes changes between two versions of Python packages and what scopes each has"
 readme = "README.md"
 requires-python = ">=3.14"
 license = { file = "LICENSE" }
-authors = [{ name = "baz" }]
+authors = [{ name = "Noorul Ali" }]
 dependencies = []
-keywords = ["supply chain", "security", "dependencies", "merkle", "pypi"]
+keywords = ["supply chain", "cybersecurity", "dependencies", "merkle", "security"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
     "License :: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.14",
     "Topic :: Security",
     "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Utilities",
 ]
 
 [project.urls]
 Repository = "https://github.com/matrixdex/algobank"
-Documentation = "https://github.com/matrixdex/algobank/blob/main/docs/ARCHITECTURE-v0.1.md"
+Documentation = "https://matrixdex.github.io/algobank/usage.html"
+Website = "https://matrixdex.github.io/algobank/index.html"
+Issues = "https://github.com/matrixdex/algobank/issues"
 
 [project.scripts]
 algobank = "algobank.diff:main"
 
 [tool.flit.sdist]
 include = ["LICENSE", "README.md"]
-exclude = ["v0.1", "docs", "CLAUDE.md"]
+exclude = ["v0.1", "docs"]
