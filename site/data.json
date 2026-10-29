@@ -22,7 +22,7 @@
             "Shell writes file because algobank lacks write to file scope",
             "Recommended report export",
             "<pre><code>old=wheels/requests-2.31.0-py3-none-any.whl\nnew=wheels/requests-2.32.3-py3-none-any.whl\no=$(basename \"$old\"); n=$(basename \"$new\"); v1=${o#*-}; v2=${n#*-}\nname=${o%%-*}-${v1%%-*}-${v2%%-*}\nalgobank diff \"$old\" \"$new\" &gt; \"$name.txt\"\nalgobank diff --json \"$old\" \"$new\" &gt; \"$name.json\"</code></pre>",
-            "Report name is <code>package-oldversion-newversion</code>. <code>requests-2.31.0-2.32.3</code>. is a valid filename. Scripts generates filename from wheel names.",
+            "Report name is <code>package-oldversion-newversion</code>. <code>requests-2.31.0-2.32.3</code> is a valid filename. Script generates filename from wheel names.",
             "Options",
             "<pre><code>algobank scope wheels/*.whl --json\nalgobank scope wheels/*.whl --ignore-native</code></pre>",
             "<code>--json</code> gives the same report for programs and agents. <code>--ignore-native</code> reports native binaries but does not fail on them.",
