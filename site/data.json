@@ -5,7 +5,7 @@
             "Algobank has no network access and writes no files. It reads only the wheels you give it. Your package manager downloads them.",
             "Installation",
             "<pre><code>pip install algobank</code></pre>",
-            "Algobank uses the Python standard library only. It has no dependencies.",
+            "standard library only, no dependencies",
             "Download packages",
             "<pre><code>pip download --only-binary :all: -d wheels/ requests==2.34.2</code></pre>",
             "This command downloads the package and every package it calls. pip has the network. Algobank does not. The option <code>--only-binary :all:</code> downloads wheels only. So pip never runs the build code of an sdist.",
