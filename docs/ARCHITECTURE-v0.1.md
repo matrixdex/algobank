@@ -943,6 +943,7 @@ A short script in `config.json` (`index_javascript`) does the search and the exp
 |---|---|---|---|
 | `algobank` 0.1.0 | Itself. The first algobanked code. | `file` | no high |
 | `algobank` 1.0.1 | The release on PyPI. It algobanked itself. | `file` | no high |
+| `algobank` 1.0.2 | The release on PyPI. It algobanked itself. | `file` | no high |
 | `flit_core` 3.12.0 | The build backend of Algobank. It runs when Algobank is installed from source. | `TOP`, `env`, `file` | no high |
 | `dexweb` 4.2.5 | It builds the website. | `file`, `process` | no high |
 | `beautifulsoup4` 4.15.0, `cobble` 0.1.4, `importlib_resources` 7.1.0, `mammoth` 1.13.0, `pypdf` 6.21.2, `soupsieve` 3.0.4, `typing_extensions` 4.16.0 | The packages that dexweb calls | From `TOP` only to `TOP`, `env`, `file`, `process` (`pypdf`). `mammoth` uses `network`. | No high. Warnings only for optional extras that the closure does not install. |
