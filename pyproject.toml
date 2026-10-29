@@ -4,12 +4,12 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "algobank"
-version = "1.0.0"
+version = "1.0.1"
 description = "algobank computes changes between two versions of Python packages and what scopes each has"
 readme = "README.md"
 requires-python = ">=3.14"
 license = { file = "LICENSE" }
-authors = [{ name = "Noorul Ali" }]
+authors = [{ name="Noorul Ali", email="manonthemoon13131@gmail.com" }]
 dependencies = []
 keywords = ["supply chain", "cybersecurity", "dependencies", "merkle", "security"]
 classifiers = [

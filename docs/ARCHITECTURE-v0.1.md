@@ -1,6 +1,6 @@
 # Algobank architecture
 
-Version 1.0.0 · Python 3.14
+Version 0.1 · Python 3.14
 
 This document is the reference for the design of Algobank. It tells what Algobank is. It tells how each part works. It tells which parts are built. It tells which parts are only specified.
 
@@ -59,7 +59,7 @@ Algobank runs a reference set of checks at the start. Thus the result store is n
 
 ### 1.4 Layers above the core
 
-Banking and insurance are layers on top of the core. They include vouches, deposits, penalties, interest and payouts. They are not part of version 1.0.0. Section 9 lists them.
+Banking and insurance are layers on top of the core. They include vouches, deposits, penalties, interest and payouts. They are not part of v0.1. Section 9 lists them.
 
 ## 2. Terms
 
@@ -194,10 +194,10 @@ Algobank does not follow calls into outside packages. These calls add to scope (
 
 Each outside package that a node uses becomes a pin in the hash of that node. [built]
 
-- Version 1.0.0 reads dependency names from wheel metadata (`Requires-Dist`).
-- Version 1.0.0 maps import names to distribution names where they are different. Example: `bs4` maps to `beautifulsoup4`.
+- v0.1 reads dependency names from wheel metadata (`Requires-Dist`).
+- v0.1 maps import names to distribution names where they are different. Example: `bs4` maps to `beautifulsoup4`.
 
-A garden part can depend only on other garden parts. Each dependency is pinned by digest. Version 1.0.0 records pins. It does not enforce this rule. [spec]
+A garden part can depend only on other garden parts. Each dependency is pinned by digest. v0.1 records pins. v0.1 does not enforce this rule. [spec]
 
 ### 3.7 Hash function
 
@@ -234,7 +234,7 @@ This is the proven-checker method. Tarjan's algorithm has no proof. Its output i
 
 ### 4.1 The scope set
 
-| Scope | Covers | Detected in 1.0.0 | Component tier | Native tier |
+| Scope | Covers | Detected in v0.1 | Component tier | Native tier |
 |---|---|---|---|---|
 | `file` | Reading, writing, listing or deleting files | yes | enforced | enforced |
 | `network` | Each network connection or listening socket | yes | enforced | enforced |
@@ -573,7 +573,7 @@ Each package is a version. The version is the exact code that Algobank received.
   - They have a reason to release the patch. They have a reason to get admission again.
 - **Disclosure.** Algobank tells users of a rejected version that it has no insurance. Algobank tells them which admitted version has insurance. The incentive works only when users know which versions have insurance.
 
-## 10. Implementation (1.0.0)
+## 10. Implementation (v0.1)
 
 ### 10.1 Files
 
@@ -817,7 +817,7 @@ Rules:
 | Synthetic wheels that copy attack patterns. A `.pth` file with a module that reads the environment and uses the network (LiteLLM 1.107.0). An existing formatting function that starts to use the network (chalk/debug). New `exec`. A new native binary. A new dependency. | Each gives the expected high or medium finding (`test_diff.py`). |
 | A clean update of the same synthetic package. A dependency range that changes only in format. | No findings |
 | A new test-only dependency (`setuptools ; extra == 'testing'`) | High. Optional dependencies also bring code that is not analyzed. |
-| The wheel of Algobank (`algobank scope dist/algobank-1.0.0-py3-none-any.whl`) | `file`, in `load` and `known`. `load` reads the one file that it gets. `known` reads `known.json`. No network. No other findings. |
+| The wheel of Algobank (`algobank scope dist/algobank-0.1.0-py3-none-any.whl`) | `file`, only in `load`. `load` reads the one file that it gets. No network. No other findings. |
 | The sdist of Algobank | High. Its build runs `flit_core`. |
 | Normal updates of popular packages: requests 2.31.0→2.32.3, urllib3 2.2.1→2.2.2, idna 3.6→3.7, rich 13.7.0→13.7.1, packaging 24.0→24.1 | Four have no medium or high findings. requests has one real change, flagged high: a new computed import. It runs at import time. It selects a character-detection library. |
 | dexweb 4.2.2→4.2.3 | `process` is reported as new. It comes in at `Dexweb.run_git`. |
@@ -885,8 +885,8 @@ python3.14 -I v0.1/proofs/check_model.py
 
 `uv build` (or `python -m build`) makes two files:
 
-- `dist/algobank-1.0.0-py3-none-any.whl`
-- `dist/algobank-1.0.0.tar.gz`
+- `dist/algobank-0.1.0-py3-none-any.whl`
+- `dist/algobank-0.1.0.tar.gz`
 
 Both files contain only the `algobank` package, `LICENSE`, `README.md` and metadata. They do not contain tests, proofs, documents or `CLAUDE.md`. `twine check dist/*` passes.
 
