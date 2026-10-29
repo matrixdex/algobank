@@ -57,7 +57,7 @@ findings:
   [high] old: requests 2.31.0: PYSEC-2026-1873 (algobank/known.json)
   [high] old: requests 2.31.0: PYSEC-2026-2275 (algobank/known.json)
   ...</code></pre></p><p>Save report</p><p><pre><code>algobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.txt
-algobank diff --json wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.json</code></pre></p><p>Your shell writes the file. Algobank only prints.</p><p>Recommended report export</p><p><pre><code>old=wheels/requests-2.31.0-py3-none-any.whl
+algobank diff --json wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.json</code></pre></p><p>Shell writes file because algobank lacks write to file scope</p><p>Recommended report export</p><p><pre><code>old=wheels/requests-2.31.0-py3-none-any.whl
 new=wheels/requests-2.32.3-py3-none-any.whl
 o=$(basename "$old"); n=$(basename "$new"); v1=${o#*-}; v2=${n#*-}
 name=${o%%-*}-${v1%%-*}-${v2%%-*}
