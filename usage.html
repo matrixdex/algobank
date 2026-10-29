@@ -67,7 +67,9 @@ findings:
   [high] old: requests 2.31.0: PYSEC-2026-1872 (algobank/known.json)
   [high] old: requests 2.31.0: PYSEC-2026-1873 (algobank/known.json)
   [high] old: requests 2.31.0: PYSEC-2026-2275 (algobank/known.json)
-  ...</code></pre></p><p><pre><code># OPTIONS
+  ...</code></pre></p><p><pre><code># SAVE A REPORT (your shell writes the file; algobank only prints)
+algobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.txt
+algobank diff --json wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.json</code></pre></p><p><pre><code># OPTIONS
 algobank scope wheels/*.whl --json            # the same report for programs and agents
 algobank scope wheels/*.whl --ignore-native   # report native binaries, but do not fail on them
 
