@@ -44,10 +44,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </head>
 <body>
 <header class='top'><a class='back' href='index.html' aria-label='back to the homepage'><span aria-hidden='true'>&larr;</span></a><h1>Usage</h1></header>
-<p>Algobank has no network access and writes no files. It reads only the wheels you give it. Your package manager downloads them.</p><p>Installation</p><p><pre><code>pip install algobank                     # standard library only, no dependencies</code></pre></p><p>Download packages</p><p><pre><code>pip download --only-binary :all: -d wheels/ requests==2.34.2    # the package and every package it calls
-                                         # pip has the network, algobank does not
-                                         # --only-binary: never run an sdist&#x27;s build code</code></pre></p><p>Find package scope with algobank scope</p><p><pre><code>algobank scope wheels/*.whl              # one report per file; called packages missing from wheels/ get a warning
-pip install --no-index --find-links wheels/ requests==2.34.2    # install exactly what was checked</code></pre></p><p>Compare 2 versions with algobank diff</p><p><pre><code>pip download --no-deps --only-binary :all: -d wheels/ requests==2.31.0
+<p>Algobank has no network access and writes no files. It reads only the wheels you give it. Your package manager downloads them.</p><p>Installation</p><p>Algobank uses the Python standard library only. It has no dependencies.</p><p><pre><code>pip install algobank</code></pre></p><p>Download packages</p><p>This command downloads the package and every package it calls. pip has the network. Algobank does not. The option <code>--only-binary :all:</code> downloads wheels only. So pip never runs the build code of an sdist.</p><p><pre><code>pip download --only-binary :all: -d wheels/ requests==2.34.2</code></pre></p><p>Find package scope with algobank scope</p><p><code>algobank scope</code> gives one report per file. A called package that is missing from <code>wheels/</code> gets a warning.</p><p><pre><code>algobank scope wheels/*.whl</code></pre></p><p>Then install exactly the files that algobank checked.</p><p><pre><code>pip install --no-index --find-links wheels/ requests==2.34.2</code></pre></p><p>Compare 2 versions with algobank diff</p><p><pre><code>pip download --no-deps --only-binary :all: -d wheels/ requests==2.31.0
 pip download --no-deps --only-binary :all: -d wheels/ requests==2.32.3
 algobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl</code></pre></p><p>Sample report</p><p><pre><code>requests-2.31.0-py3-none-any.whl -&gt; requests-2.32.3-py3-none-any.whl
   nodes (functions, classes, module values): 650 (441 unchanged, 26 code changed, 170 affected by a changed dependency, 13 added, 1 removed)
@@ -58,22 +55,14 @@ findings:
   [high] old: requests 2.31.0: PYSEC-2026-1872 (algobank/known.json)
   [high] old: requests 2.31.0: PYSEC-2026-1873 (algobank/known.json)
   [high] old: requests 2.31.0: PYSEC-2026-2275 (algobank/known.json)
-  ...</code></pre></p><p>Save report</p><p><pre><code># your shell writes the file; algobank only prints
-algobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.txt
-algobank diff --json wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.json</code></pre></p><p>Recommended report export</p><p><pre><code># file name: package-oldversion-newversion, taken from the wheel names
-# no name or version in a wheel name contains -, so the name splits back into 3 fields on -
-old=wheels/requests-2.31.0-py3-none-any.whl
+  ...</code></pre></p><p>Save report</p><p>Your shell writes the file. Algobank only prints.</p><p><pre><code>algobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.txt
+algobank diff --json wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.json</code></pre></p><p>Recommended report export</p><p>The file name is <code>package-oldversion-newversion</code>, for example <code>requests-2.31.0-2.32.3</code>. The script takes these fields from the wheel names. No name or version in a wheel name contains a hyphen. So the file name splits back into 3 fields on the hyphen.</p><p><pre><code>old=wheels/requests-2.31.0-py3-none-any.whl
 new=wheels/requests-2.32.3-py3-none-any.whl
 o=$(basename "$old"); n=$(basename "$new"); v1=${o#*-}; v2=${n#*-}
-name=${o%%-*}-${v1%%-*}-${v2%%-*}                 # requests-2.31.0-2.32.3
+name=${o%%-*}-${v1%%-*}-${v2%%-*}
 algobank diff "$old" "$new" &gt; "$name.txt"
-algobank diff --json "$old" "$new" &gt; "$name.json"</code></pre></p><p>Options</p><p><pre><code>algobank scope wheels/*.whl --json            # the same report for programs and agents
-algobank scope wheels/*.whl --ignore-native   # report native binaries, but do not fail on them
-
-# EXIT STATUS
-# 0  no high finding
-# 1  a high finding
-# 2  error</code></pre></p>
+algobank diff --json "$old" "$new" &gt; "$name.json"</code></pre></p><p>Options</p><p><code>--json</code> gives the same report for programs and agents. <code>--ignore-native</code> reports native binaries but does not fail on them.</p><p><pre><code>algobank scope wheels/*.whl --json
+algobank scope wheels/*.whl --ignore-native</code></pre></p><p>Exit status: 0 means no high finding. 1 means a high finding. 2 means an error.</p>
 <footer><h3><a href='index.html'>algobank</a></h3><nav><div class='indexlink'><a href=architecture.html>Architecture</a><br></div><div class='indexlink'><a href=findings.html>Findings</a><br></div><div class='indexlink'><a href=knownexploitsandvulnerabilities.html>Known Exploits and Vulnerabilities</a><br></div><div class='indexlink'><a href=limits.html>Limits</a><br></div><div class='indexlink'><a href=source.html>Source</a><br></div><div class='indexlink'><a href=usage.html>Usage</a><br></div><div class='indexlink'><a href=vision.html>Vision</a><br></div></nav></footer>
 </body>
 </html>
