@@ -1440,7 +1440,7 @@ python3.14 -I v0.1/proofs/check_model.py
 <ul>
 <li>A search bar. It takes <code>package</code> or <code>package v1.2.3</code>. A link can carry <code>?q=</code>.</li>
 <li>A message for a version that is not in the bank: <code>package v1.2.3 are not algobanked</code>. The admitted versions of the package show below it.</li>
-<li>The records as a table. On wide screens (1,045 pixels and wider), each field has its own column. On narrower screens, the table shows the package and its findings. A click on an entry opens all of its fields below it.</li>
+<li>The records as a table. The newest admitted record comes first. On wide screens (1,045 pixels and wider), each field has its own column. On narrower screens, the table shows the package and its findings. A click on an entry opens all of its fields below it.</li>
 <li>Each hash as its first eight characters. A button copies the full hash.</li>
 <li>Buttons that export the bank as JSONL or CSV. The JSONL is the file without changes. The CSV has one column for each field.</li>
 <li>The lines of the file without changes, in a <code>&lt;script type='application/x-ndjson' id='bank.jsonl'&gt;</code> block for codegens.</li>
