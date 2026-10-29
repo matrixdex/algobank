@@ -932,7 +932,7 @@ A short script in `config.json` (`index_javascript`) does the search and the exp
 
 - The original dex colors: black, light grays, white and green `#00ff41`.
 - Severity colors on the Findings page and in the bank: red for high and for `TOP`, yellow for warning and medium, green for low.
-- Three fonts only: Arial, monospace and Italiana. Italiana is for titles. The dex serves it from `site/assets/` (SIL Open Font License).
+- Three fonts only: Arial, monospace and Italiana. Italiana is only for the name algobank. The name is the homepage title and the footer title on every page. All other titles are Arial. The dex serves Italiana from `site/assets/` (SIL Open Font License).
 - Lists have no bullets. Only the Findings page marks its items. Each mark is a band in the color of the severity.
 - Code blocks never go off the page.
 - Each page fits screens of 320 pixels and wider.
