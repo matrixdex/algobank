@@ -44,7 +44,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </head>
 <body>
 <header class='top'><a class='back' href='index.html' aria-label='back to the homepage'><span aria-hidden='true'>&larr;</span></a><h1>Architecture</h1></header>
-<p><div class='doc'><p>Version 0.1 · Python 3.14</p>
+<p><div class='doc'><p>Version 1.0.0 · Python 3.14</p>
 <p>This document is the reference for the design of Algobank. It tells what Algobank is. It tells how each part works. It tells which parts are built. It tells which parts are only specified.</p>
 <p>Status markers:</p>
 <ul>
@@ -92,7 +92,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <li>The codegen checks each version that is not admitted. This redundancy uses CPU cycles on purpose.</li>
 </ol>
 <h3>1.4 Layers above the core</h3>
-<p>Banking and insurance are layers on top of the core. They include vouches, deposits, penalties, interest and payouts. They are not part of v0.1. Section 9 lists them.</p>
+<p>Banking and insurance are layers on top of the core. They include vouches, deposits, penalties, interest and payouts. They are not part of version 1.0.0. Section 9 lists them.</p>
 <h2>2. Terms</h2>
 <table>
 <thead>
@@ -322,10 +322,10 @@ document.addEventListener("DOMContentLoaded", () => {
 <h3>3.6 Dependencies and pins</h3>
 <p>Each outside package that a node uses becomes a pin in the hash of that node. [built]</p>
 <ul>
-<li>v0.1 reads dependency names from wheel metadata (<code>Requires-Dist</code>).</li>
-<li>v0.1 maps import names to distribution names where they are different. Example: <code>bs4</code> maps to <code>beautifulsoup4</code>.</li>
+<li>Version 1.0.0 reads dependency names from wheel metadata (<code>Requires-Dist</code>).</li>
+<li>Version 1.0.0 maps import names to distribution names where they are different. Example: <code>bs4</code> maps to <code>beautifulsoup4</code>.</li>
 </ul>
-<p>A garden part can depend only on other garden parts. Each dependency is pinned by digest. v0.1 records pins. v0.1 does not enforce this rule. [spec]</p>
+<p>A garden part can depend only on other garden parts. Each dependency is pinned by digest. Version 1.0.0 records pins. It does not enforce this rule. [spec]</p>
 <h3>3.7 Hash function</h3>
 <p><code>H</code> is SHA-256. Algobank writes it as 64 hex characters.</p>
 <p>All digests in a tree have the same length. If not, <code>root()</code> gives an error. The split of a joined input into its halves needs that length.</p>
@@ -380,7 +380,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <tr>
 <th>Scope</th>
 <th>Covers</th>
-<th>Detected in v0.1</th>
+<th>Detected in 1.0.0</th>
 <th>Component tier</th>
 <th>Native tier</th>
 </tr>
@@ -888,7 +888,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <li>They have a reason to release the patch. They have a reason to get admission again.</li>
 <li><strong>Disclosure.</strong> Algobank tells users of a rejected version that it has no insurance. Algobank tells them which admitted version has insurance. The incentive works only when users know which versions have insurance.</li>
 </ul>
-<h2>10. Implementation (v0.1)</h2>
+<h2>10. Implementation (1.0.0)</h2>
 <h3>10.1 Files</h3>
 <table>
 <thead>
@@ -1311,8 +1311,8 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 <td>High. Optional dependencies also bring code that is not analyzed.</td>
 </tr>
 <tr>
-<td>The wheel of Algobank (<code>algobank scope dist/algobank-0.1.0-py3-none-any.whl</code>)</td>
-<td><code>file</code>, only in <code>load</code>. <code>load</code> reads the one file that it gets. No network. No other findings.</td>
+<td>The wheel of Algobank (<code>algobank scope dist/algobank-1.0.0-py3-none-any.whl</code>)</td>
+<td><code>file</code>, in <code>load</code> and <code>known</code>. <code>load</code> reads the one file that it gets. <code>known</code> reads <code>known.json</code>. No network. No other findings.</td>
 </tr>
 <tr>
 <td>The sdist of Algobank</td>
@@ -1402,8 +1402,8 @@ python3.14 -I v0.1/proofs/check_model.py
 <h3>10.8 Release</h3>
 <p><code>uv build</code> (or <code>python -m build</code>) makes two files:</p>
 <ul>
-<li><code>dist/algobank-0.1.0-py3-none-any.whl</code></li>
-<li><code>dist/algobank-0.1.0.tar.gz</code></li>
+<li><code>dist/algobank-1.0.0-py3-none-any.whl</code></li>
+<li><code>dist/algobank-1.0.0.tar.gz</code></li>
 </ul>
 <p>Both files contain only the <code>algobank</code> package, <code>LICENSE</code>, <code>README.md</code> and metadata. They do not contain tests, proofs, documents or <code>CLAUDE.md</code>. <code>twine check dist/*</code> passes.</p>
 <p>The maintainer uploads the files manually with the maintainer's own PyPI credentials. The repository contains no credentials. The code reads no environment variables.</p>
