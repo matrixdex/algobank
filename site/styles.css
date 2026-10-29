@@ -15,7 +15,7 @@ h1 {
   margin: 0 0 24px;
 }
 header.top h1 {  /* page titles are Arial; Italiana is only the name algobank, on the homepage and in the footer */
-  font-family: Arial, sans-serif; font-weight: 400; letter-spacing: normal;
+  font-family: Arial, sans-serif; font-weight: 400; letter-spacing: normal; text-transform: uppercase;
 }
 footer h3 {
   font-family: 'Italiana', serif; font-weight: 400; letter-spacing: 0.05em; font-size: 1.5rem;
