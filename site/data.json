@@ -16,7 +16,7 @@
             "Save report",
             "<pre><code># your shell writes the file; algobank only prints\nalgobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.txt\nalgobank diff --json wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.json</code></pre>",
             "Recommended report export",
-            "<pre><code># file name: package_oldversion_newversion, taken from the wheel names\nold=wheels/requests-2.31.0-py3-none-any.whl\nnew=wheels/requests-2.32.3-py3-none-any.whl\no=$(basename \"$old\"); n=$(basename \"$new\"); v1=${o#*-}; v2=${n#*-}\nname=${o%%-*}_${v1%%-*}_${v2%%-*}                 # requests_2.31.0_2.32.3\nalgobank diff \"$old\" \"$new\" &gt; \"$name.txt\"\nalgobank diff --json \"$old\" \"$new\" &gt; \"$name.json\"</code></pre>",
+            "<pre><code># file name: package-oldversion-newversion, taken from the wheel names\n# no name or version in a wheel name contains -, so the name splits back into 3 fields on -\nold=wheels/requests-2.31.0-py3-none-any.whl\nnew=wheels/requests-2.32.3-py3-none-any.whl\no=$(basename \"$old\"); n=$(basename \"$new\"); v1=${o#*-}; v2=${n#*-}\nname=${o%%-*}-${v1%%-*}-${v2%%-*}                 # requests-2.31.0-2.32.3\nalgobank diff \"$old\" \"$new\" &gt; \"$name.txt\"\nalgobank diff --json \"$old\" \"$new\" &gt; \"$name.json\"</code></pre>",
             "Options",
             "<pre><code>algobank scope wheels/*.whl --json            # the same report for programs and agents\nalgobank scope wheels/*.whl --ignore-native   # report native binaries, but do not fail on them\n\n# EXIT STATUS\n# 0  no high finding\n# 1  a high finding\n# 2  error</code></pre>"
         ]
