@@ -44,21 +44,12 @@ document.addEventListener("DOMContentLoaded", () => {
 </head>
 <body>
 <header class='top'><a class='back' href='index.html' aria-label='back to the homepage'><span aria-hidden='true'>&larr;</span></a><h1>Usage</h1></header>
-<p>Algobank has no network access and writes no files. It reads only the wheels you give it. Your package manager downloads them.</p><p><pre><code># INSTALL
-pip install algobank                     # standard library only, no dependencies
-
-# DOWNLOAD (pip has the network, algobank does not)
-pip download --only-binary :all: -d wheels/ requests==2.34.2    # the package and every package it calls
-                                         # --only-binary: never run an sdist&#x27;s build code
-
-# CHECK EVERY FILE
-algobank scope wheels/*.whl              # one report per file; called packages missing from wheels/ get a warning
-
-# INSTALL EXACTLY WHAT WAS CHECKED
-pip install --no-index --find-links wheels/ requests==2.34.2</code></pre></p><p><pre><code># COMPARE TWO VERSIONS
-pip download --no-deps --only-binary :all: -d wheels/ requests==2.31.0
+<p>Algobank has no network access and writes no files. It reads only the wheels you give it. Your package manager downloads them.</p><p>Installation</p><p><pre><code>pip install algobank                     # standard library only, no dependencies</code></pre></p><p>Download packages</p><p><pre><code>pip download --only-binary :all: -d wheels/ requests==2.34.2    # the package and every package it calls
+                                         # pip has the network, algobank does not
+                                         # --only-binary: never run an sdist&#x27;s build code</code></pre></p><p>Find package scope with algobank scope</p><p><pre><code>algobank scope wheels/*.whl              # one report per file; called packages missing from wheels/ get a warning
+pip install --no-index --find-links wheels/ requests==2.34.2    # install exactly what was checked</code></pre></p><p>Compare 2 versions with algobank diff</p><p><pre><code>pip download --no-deps --only-binary :all: -d wheels/ requests==2.31.0
 pip download --no-deps --only-binary :all: -d wheels/ requests==2.32.3
-algobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl</code></pre></p><p><pre><code>requests-2.31.0-py3-none-any.whl -&gt; requests-2.32.3-py3-none-any.whl
+algobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl</code></pre></p><p>Sample report</p><p><pre><code>requests-2.31.0-py3-none-any.whl -&gt; requests-2.32.3-py3-none-any.whl
   nodes (functions, classes, module values): 650 (441 unchanged, 26 code changed, 170 affected by a changed dependency, 13 added, 1 removed)
   scope: TOP, env, file, network -&gt; TOP, env, file, network
 findings:
@@ -67,10 +58,15 @@ findings:
   [high] old: requests 2.31.0: PYSEC-2026-1872 (algobank/known.json)
   [high] old: requests 2.31.0: PYSEC-2026-1873 (algobank/known.json)
   [high] old: requests 2.31.0: PYSEC-2026-2275 (algobank/known.json)
-  ...</code></pre></p><p><pre><code># SAVE A REPORT (your shell writes the file; algobank only prints)
+  ...</code></pre></p><p>Save report</p><p><pre><code># your shell writes the file; algobank only prints
 algobank diff wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.txt
-algobank diff --json wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.json</code></pre></p><p><pre><code># OPTIONS
-algobank scope wheels/*.whl --json            # the same report for programs and agents
+algobank diff --json wheels/requests-2.31.0-py3-none-any.whl wheels/requests-2.32.3-py3-none-any.whl &gt; report.json</code></pre></p><p>Recommended report export</p><p><pre><code># file name: package_oldversion_newversion, taken from the wheel names
+old=wheels/requests-2.31.0-py3-none-any.whl
+new=wheels/requests-2.32.3-py3-none-any.whl
+o=$(basename "$old"); n=$(basename "$new"); v1=${o#*-}; v2=${n#*-}
+name=${o%%-*}_${v1%%-*}_${v2%%-*}                 # requests_2.31.0_2.32.3
+algobank diff "$old" "$new" &gt; "$name.txt"
+algobank diff --json "$old" "$new" &gt; "$name.json"</code></pre></p><p>Options</p><p><pre><code>algobank scope wheels/*.whl --json            # the same report for programs and agents
 algobank scope wheels/*.whl --ignore-native   # report native binaries, but do not fail on them
 
 # EXIT STATUS
