@@ -4,7 +4,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "algobank"
-version = "1.0.1"
+version = "1.0.2"
 description = "algobank computes changes between two versions of Python packages and what scopes each has"
 readme = "README.md"
 requires-python = ">=3.14"
