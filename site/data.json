@@ -60,7 +60,7 @@
         "body": [
             "Repository: <a href='https://github.com/matrixdex/algobank'>github.com/matrixdex/algobank</a><br>Branch main: library core<br>Branch web: this website<br>Branch live: algobank live data source",
             "Issues: <a href='https://github.com/matrixdex/algobank/issues'>github.com/matrixdex/algobank/issues</a>",
-            "PyPI: <a href='https://pypi.org/project/algobank/1.0.2/'>pypi.org/project/algobank/1.0.2/</a>"
+            "PyPI: <a href='https://pypi.org/project/algobank/'>pypi.org/project/algobank/</a>"
         ]
     },
     {
