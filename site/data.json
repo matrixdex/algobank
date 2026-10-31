@@ -59,7 +59,8 @@
         "title": "Source",
         "body": [
             "Repository: <a href='https://github.com/matrixdex/algobank'>github.com/matrixdex/algobank</a><br>Branch main: library core<br>Branch web: this website<br>Branch live: algobank live data source",
-            "Issues: Raise issues here (<a href='https://github.com/matrixdex/algobank/issues'>https://github.com/matrixdex/algobank/issues</a>)"
+            "Issues: <a href='https://github.com/matrixdex/algobank/issues'>github.com/matrixdex/algobank/issues</a>",
+            "PyPI: <a href='https://pypi.org/project/algobank/1.0.2/'>pypi.org/project/algobank/1.0.2/</a>"
         ]
     },
     {
