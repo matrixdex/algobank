@@ -906,6 +906,7 @@ Each website is a dex. dexweb builds it. `python run.py` in `site/` writes the w
 
 **The index is the bank.** Its title is "algobank Algorithm Bank". At each build, `run.py` renders `bank.jsonl` from `live` into the index template in `site/config.json`. The index has these items:
 
+- Five lines that say what Algobank is. They are plain text in the page, for people and for agents. One line lights up at a time. A pointer on the lines stops the motion. With reduced motion set, nothing moves.
 - A search bar. It takes `package` or `package v1.2.3`. A link can carry `?q=`.
 - A message for a version that is not in the bank: `package v1.2.3 are not algobanked`. The admitted versions of the package show below it.
 - The records as a table. The newest admitted record comes first. On wide screens (1,045 pixels and wider), each field has its own column. On narrower screens, the table shows the package and its findings. A click on an entry opens all of its fields below it.
