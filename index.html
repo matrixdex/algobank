@@ -68,7 +68,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <li>Algobank gives each function in a package (Python) a content hash. Hashes form a code Merkle tree, whose top hash is the code root.</li>
 <li>Algobank shows what each part of a package can reach: <code>file</code>, <code>network</code>, <code>process</code>, <code>env</code>, <code>native</code> and <code class='top'>TOP</code>. Package scope is the union of all package part scopes.</li>
 <li><code class='top'>TOP</code> means: Algobank cannot see what this code does. It could do anything.</li>
-<li>Algobank has no network access, writes no code, writes no files and only reads input files without execution. No build scripts.</li>
+<li>Algobank has no network access, writes no code, writes no files and only reads input files and its own advisory data, without execution. No build scripts.</li>
 <li>It uses the Python standard library only. No dependencies.</li>
 </ul>
 <!-- BANK: written by run.py from bank.jsonl on the live branch -->
