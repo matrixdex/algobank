@@ -333,6 +333,18 @@ a.back:hover, a.back:focus-visible {
 p:has(+ p:empty + pre) {  /* Usage: the plain-text heading above each code block */
   color: #00ff41;
 }
+/* the code root as a strip: one slice per node; dark reaches nothing, grey files, red more; yellow: own code changed */
+svg.root { display: inline-block; vertical-align: middle; width: calc(9ch * 0.85 + 0.8em * 0.85); height: 1.15em; background: black; }
+svg.root .none { fill: rgb(20, 20, 20); } svg.root .file { fill: rgb(220, 220, 220); fill-opacity: 0.45; } svg.root .red { fill: #ff4141; }
+svg.root .dim { opacity: 0.3; } svg.root .chg { fill: #ffd700; }
+td.wide > svg.root:only-child { width: 130px; height: 1.3em; }  /* the width of the hash text and the copy button it replaced */
+code.hash { display: inline-block; vertical-align: middle; max-width: 9.6ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1044px) {  /* phone details: the hash and the strip fill the row, like the source line */
+  #bank tr.details dd:has(> .copy) { display: flex; align-items: center; gap: 8px; }
+  #bank tr.details dd > code.hash { flex: 1; width: 0; min-width: 0; max-width: none; }
+  #bank tr.details dd > svg.root { flex: 1; width: 0; min-width: 0; height: 1.4em; }
+  #bank tr.details dd > .copy { flex: none; margin: 0; }
+}
 ul.hero {  /* homepage: what algobank is, in five lines; plain text in the page for people and for agents */
   display: grid; align-items: center; margin: 0 0 32px; text-align: center;  /* as wide as the search bar */
 }

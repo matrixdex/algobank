@@ -2,7 +2,7 @@
 # run in site/:  python run.py
 # needs dexweb; algobank it and everything it calls first (see the Usage page)
 
-import html, json, re, shutil, subprocess
+import html, json, os, re, shutil, subprocess
 from dexweb import dexgen
 
 # THE INDEX IS THE BANK: rendered from bank.jsonl on the live branch, every build
@@ -10,9 +10,60 @@ subprocess.run(["git", "fetch", "-q", "origin", "live"], check=True)
 bank = subprocess.run(["git", "show", "origin/live:bank.jsonl"], capture_output=True, text=True, check=True).stdout
 records = [json.loads(line) for line in bank.splitlines() if line.strip()]
 
+# THE CODE ROOT AS A STRIP: every banked version is analyzed again at each build, by Algobank's own code
+import hashlib, math, sys, tempfile
+sys.path.insert(0, "..")
+from algobank import diff as ad
+from algobank.pkgmerkle import Package
+HIGH = {"network", "process", "env", "native", "TOP"}
+nodes = {}                                                  # (name, version) -> the nodes of that version
+with tempfile.TemporaryDirectory() as tmp:
+    for r in records:
+        key = (r["name"], r["version"])
+        if r.get("file"):                                   # the file itself, from PyPI, checked against the bank
+            subprocess.run([sys.executable, "-m", "pip", "download", "-q", "--no-deps", "--only-binary", ":all:", "-d", tmp,
+                            f"{r['name']}=={r['version']}"], check=True)
+            data = open(os.path.join(tmp, r["file"]), "rb").read()
+            if hashlib.sha256(data).hexdigest() != r["sha256"]:
+                sys.exit(f"{r['file']}: SHA-256 differs from bank.jsonl")
+            pkg = ad.analyze(ad.Artifact(r["file"], data))["pkg"]
+        else:                                               # no file: the source commit named in the record
+            commit = re.fullmatch(r"https://github\.com/matrixdex/algobank/tree/([0-9a-f]+)", r["source"]).group(1)
+            names = subprocess.run(["git", "ls-tree", "-r", "--name-only", "--full-tree", commit, "algobank/"], capture_output=True, text=True, check=True).stdout.split()
+            pkg = Package({f: subprocess.run(["git", "show", f"{commit}:{f}"], capture_output=True, text=True, check=True).stdout
+                           for f in names if f.endswith(".py")})
+        if pkg.root() != r["code_root"]:
+            sys.exit(f"{r['name']} {r['version']}: code root differs from bank.jsonl")
+        nodes[key] = pkg.nodes
+def strip(r):                                               # one slice per node, sized by its code; yellow: own code changed
+    new = nodes[(r["name"], r["version"])]
+    older = [x for x in records if x["name"] == r["name"] and ad.vkey(x["version"]) < ad.vkey(r["version"])]
+    prev = max(older, key=lambda x: ad.vkey(x["version"])) if older else None
+    old = nodes[(prev["name"], prev["version"])] if prev else None
+    ids = sorted(set(new) | set(old or {}))                 # a removed node keeps its place
+    size = {n: math.sqrt(max((new.get(n) or old.get(n))["size"], 1)) for n in ids}
+    total, x, slices, marks, red = sum(size.values()), 0.0, [], [], 0
+    for n in ids:
+        w = 100 * size[n] / total
+        changed = old is not None and (n not in new or n not in old or old[n]["own"] != new[n]["own"])
+        if n in new:
+            caps = new[n]["caps"]
+            tone = "red" if caps & HIGH else "file" if "file" in caps else "none"
+            red += tone == "red"
+            slices.append(f"<rect class='{tone}{' dim' if old is not None and not changed else ''}' x='{x:.2f}' width='{w:.2f}' height='10'/>")
+        if changed:
+            mw = max(w, 2.5)
+            marks.append(f"<rect class='chg' x='{x + w / 2 - mw / 2:.2f}' width='{mw:.2f}' height='10'/>")
+        x += w
+    label = (f"code root {r['code_root']}. {len(new)} parts. {red} can reach the network, processes, the environment, native code "
+             "or code Algobank cannot see." + (f" {len(marks)} changed since {prev['version']}." if prev else " First version in the bank."))
+    return (f"<svg class='root' viewBox='0 0 100 10' preserveAspectRatio='none' role='img' aria-label='{esc(label)}'>"
+            f"<title>{esc(label)}</title>{''.join(slices)}{''.join(marks)}</svg>")
+
 def esc(v): return html.escape(str(v))
-def short(h):                                               # a hash: its first 8 characters, an ellipsis, a copy button
-    return f"<code>{esc(h[:8])}…</code><button type='button' class='copy' data-copy='{esc(h)}' aria-label='copy {esc(h)}'>copy</button>"
+def copy(h): return f"<button type='button' class='copy' data-copy='{esc(h)}' aria-label='copy {esc(h)}'>copy</button>"
+def short(h):                                               # a hash in full; CSS shows what fits, then an ellipsis; a copy button
+    return f"<code class='hash'>{esc(h)}</code>{copy(h)}"
 def text(v):                                                # any 64-character hash inside a text is shortened too
     return re.sub(r"[0-9a-f]{64}", lambda m: short(m.group(0)), esc(v))
 def scope(r):
@@ -25,7 +76,7 @@ def count(f, k):                                            # one finding count,
 def details(r):                                             # every field of the record, in the order of the file
     rows = [("version", esc(r["version"])), ("admitted", esc(r["admitted"])), ("scope", scope(r)),
             ("findings", findings(r["findings"], ("high", "warning", "medium", "low", "info")))]
-    rows += [(k.replace("_", " "), short(r[k]) if k in ("sha256", "code_root") else text(r[k]))
+    rows += [(k.replace("_", " "), short(r[k]) if k == "sha256" else strip(r) + copy(r[k]) if k == "code_root" else text(r[k]))
              for k in ("file", "sha256", "code_root", "nodes", "source", "used_for", "algobanked_by") if k in r]
     return "<dl>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows) + "</dl>"
 rows = "".join(                                             # one tbody per record: the entry, and its details below it
@@ -36,7 +87,7 @@ rows = "".join(                                             # one tbody per reco
     f"<td class='wide'>{count(r['findings'], 'high')}</td>"
     f"<td class='wide'>{count(r['findings'], 'warning')}</td>"
     f"<td class='wide'>{esc(r['admitted'])}</td><td class='wide'>{short(r['sha256']) if r.get('sha256') else ''}</td>"
-    f"<td class='wide'>{short(r['code_root'])}</td><td class='narrow'>{findings(r['findings'])}</td></tr>"
+    f"<td class='wide'>{strip(r)}</td><td class='narrow'>{findings(r['findings'])}</td></tr>"
     f"<tr class='details' hidden><td colspan='10'>{details(r)}</td></tr></tbody>"
     for _, r in sorted(enumerate(records), key=lambda x: (x[1]["admitted"], x[0]), reverse=True))  # newest admitted first; same day: last added first
 page = (
@@ -56,8 +107,6 @@ with open("config.json", "w") as f:
     f.write(json.dumps(config, indent=4) + "\n")
 
 # KNOWN EXPLOITS AND VULNERABILITIES: a magazine of known.json for codegens, rendered from live every build
-import sys
-sys.path.insert(0, "..")
 from algobank.diff import norm, vkey                        # Algobank's own name normalization and PEP 440 ordering
 known = json.loads(subprocess.run(["git", "show", "origin/live:known.json"], capture_output=True, text=True, check=True).stdout)
 admitted = {}

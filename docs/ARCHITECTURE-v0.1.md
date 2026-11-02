@@ -904,13 +904,14 @@ The repository is the full company. Each branch has one role:
 
 Each website is a dex. dexweb builds it. `python run.py` in `site/` writes the website to `site/gen/`. dexweb publishes it to `web`.
 
-**The index is the bank.** Its title is "algobank Algorithm Bank". At each build, `run.py` renders `bank.jsonl` from `live` into the index template in `site/config.json`. The index has these items:
+**The index is the bank.** Its title is "algobank Algorithm Bank". At each build, `run.py` renders `bank.jsonl` from `live` into the index template in `site/config.json`. It also checks the bank. It downloads each banked file with pip. It checks the SHA-256 of each file against its record. It runs Algobank on each file and checks the code root against the record. A record without a file is computed from the source commit that it names. Any difference stops the build. The index has these items:
 
 - Five lines that say what Algobank is. They are plain text in the page, for people and for agents. One line shows at a time, for 4 seconds. A pointer on the line stops the motion. With reduced motion set, all five lines show and nothing moves.
 - A search bar. It takes `package` or `package v1.2.3`. A link can carry `?q=`.
 - A message for a version that is not in the bank: `package v1.2.3 are not algobanked`. The admitted versions of the package show below it.
 - The records as a table. The newest admitted record comes first. On wide screens (1,045 pixels and wider), each field has its own column. On narrower screens, the table shows the package and its findings. A click on an entry opens all of its fields below it.
-- Each hash as its first eight characters. A button copies the full hash.
+- The SHA-256 of each file. The page holds the full hash. The table shows its first eight characters. On narrow screens, the details show as much as fits. A button copies the full hash.
+- The code root of each version as a strip. Each slice is one node, in a fixed order, sized by its code. Dark: the node reaches nothing. Grey: it reaches files. Red: it reaches the network, processes, the environment, native code or `TOP`. Yellow: its own code changed since the previous banked version of the package. The other nodes of that version are dimmed. The label of the strip holds the full code root and a summary. In the details, a button copies the full code root.
 - Buttons that export the bank as JSONL or CSV. The JSONL is the file without changes. The CSV has one column for each field.
 - The lines of the file without changes, in a `<script type='application/x-ndjson' id='bank.jsonl'>` block for codegens.
 
