@@ -334,7 +334,7 @@ p:has(+ p:empty + pre) {  /* Usage: the plain-text heading above each code block
   color: #00ff41;
 }
 ul.hero {  /* homepage: what algobank is, in five lines; plain text in the page for people and for agents */
-  display: grid; align-items: center; max-width: 46rem; margin: 0 auto 32px; text-align: center;
+  display: grid; align-items: center; margin: 0 0 32px; text-align: center;  /* as wide as the search bar */
 }
 ul.hero li {  /* the lines share one place; one shows at a time, each for 4 of 20 seconds */
   grid-area: 1 / 1; margin: 0; opacity: 0; animation: hero-line 20s infinite;
