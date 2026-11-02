@@ -64,6 +64,13 @@ document.addEventListener("DOMContentLoaded", () => {
 </head>
 <body class='index'>
 <h1>algobank <small>Algorithm Bank</small></h1>
+<ul class='hero' aria-label='What algobank is'>
+<li>Algobank gives each function in a Python package a content hash. The hashes form a code Merkle tree.</li>
+<li>Algobank shows what each part of a package can reach. This is its scope: <code>file</code>, <code>network</code>, <code>process</code>, <code>env</code>, <code>native</code> and <code class='top'>TOP</code>.</li>
+<li><code class='top'>TOP</code> means: Algobank cannot see what this code does. It could do anything.</li>
+<li>Algobank has no network access. Its code writes no files. It reads only the files that it gets.</li>
+<li>It uses the Python standard library only. It has no dependencies.</li>
+</ul>
 <!-- BANK: written by run.py from bank.jsonl on the live branch -->
 <input id='q' type='text' placeholder='Search package in algobank (for example, dexweb v4.2.0)' data-phone='Search algobank' aria-label='Search the bank' autocomplete='off' spellcheck='false'>
 <div id='msg' role='status'></div>

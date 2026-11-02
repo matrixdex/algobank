@@ -333,6 +333,26 @@ a.back:hover, a.back:focus-visible {
 p:has(+ p:empty + pre) {  /* Usage: the plain-text heading above each code block */
   color: #00ff41;
 }
+ul.hero {  /* homepage: what algobank is, in five lines; plain text in the page for people and for agents */
+  max-width: 46rem; margin: 0 auto 32px; text-align: center; color: rgb(220, 220, 220);
+}
+ul.hero li {  /* one line lights up at a time, each for 2 of 10 seconds */
+  margin: 8px 0; opacity: 0.6; animation: hero-line 10s infinite;
+}
+ul.hero li:nth-child(2) { animation-delay: 2s; }
+ul.hero li:nth-child(3) { animation-delay: 4s; }
+ul.hero li:nth-child(4) { animation-delay: 6s; }
+ul.hero li:nth-child(5) { animation-delay: 8s; }
+@keyframes hero-line {
+  0%, 20%, 100% { opacity: 0.6; color: rgb(220, 220, 220); }
+  4%, 16% { opacity: 1; color: white; }
+}
+ul.hero:hover li, ul.hero:focus-within li {  /* a pointer on the lines stops the motion */
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  ul.hero li { animation: none; opacity: 1; }
+}
 ul.plain > li {  /* Limits: a little more space between items */
   margin: 12px 0;
 }

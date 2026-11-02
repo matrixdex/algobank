@@ -1438,6 +1438,7 @@ python3.14 -I v0.1/proofs/check_model.py
 <p>Each website is a dex. dexweb builds it. <code>python run.py</code> in <code>site/</code> writes the website to <code>site/gen/</code>. dexweb publishes it to <code>web</code>.</p>
 <p><strong>The index is the bank.</strong> Its title is "algobank Algorithm Bank". At each build, <code>run.py</code> renders <code>bank.jsonl</code> from <code>live</code> into the index template in <code>site/config.json</code>. The index has these items:</p>
 <ul>
+<li>Five lines that say what Algobank is. They are plain text in the page, for people and for agents. One line lights up at a time. A pointer on the lines stops the motion. With reduced motion set, nothing moves.</li>
 <li>A search bar. It takes <code>package</code> or <code>package v1.2.3</code>. A link can carry <code>?q=</code>.</li>
 <li>A message for a version that is not in the bank: <code>package v1.2.3 are not algobanked</code>. The admitted versions of the package show below it.</li>
 <li>The records as a table. The newest admitted record comes first. On wide screens (1,045 pixels and wider), each field has its own column. On narrower screens, the table shows the package and its findings. A click on an entry opens all of its fields below it.</li>
