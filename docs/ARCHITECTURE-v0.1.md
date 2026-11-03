@@ -147,6 +147,7 @@ A node depends only on what it uses:
 - A module value depends on what its statements read, call or import. Example: `from .config import LIMIT` makes the local value depend on `config:=LIMIT`.
 - A function can write a name through `global`. This function is a dependency of the value of that name. Thus each reader depends on the writer.
 - Each function in a module depends on the `<effects>` node of the module, if the module has one.
+- A node depends on the code that Python runs for it without a visible call: special methods, properties, decorators, and functions that it passes on as values (section 4.3).
 
 Thus a change to one module-level name changes only the code that reads that name.
 
@@ -275,6 +276,24 @@ The rolled-up scope of a node is its own scope plus the rolled-up scope of all c
 - the functions that it calls;
 - for the top-level code of a module: the modules that it imports;
 - for the top-level code of a module: the functions that it calls at import time.
+
+**Implicit calls.** Python runs much code that no call in the source names. Each such call is an edge, for hashing and for roll-up. Algobank does not know the type of an object. Thus it links each construct to every method of the package with the matching name, as it does for `obj.method()`:
+
+- operators: `a + b` links `__add__` and `__radd__`; `x += y` also links `__iadd__`; comparisons link both directions; unary operators link `__neg__`, `__pos__` and `__invert__`;
+- items: `a[k]` links `__getitem__`, `__setitem__` or `__delitem__`, `__missing__` and `__class_getitem__`;
+- iteration: `for`, comprehensions, unpacking, `*args` and `yield from` link `__iter__`, `__next__`, `__getitem__` and `__len__`; `x in a` also links `__contains__`;
+- `with` links `__enter__` and `__exit__`; `await` and the `async` forms link their methods;
+- truth tests (`if`, `while`, `and`, `or`, `not`, `assert`) link `__bool__` and `__len__`; f-strings and `%` link `__format__`, `__str__` and `__repr__`; dict and set keys link `__hash__` and `__eq__`; `del` links `__del__`;
+- builtins link their methods: `len` links `__len__`, `str` links `__str__` and `__repr__`, `sorted` links iteration and comparison;
+- an object handed to outside or builtin code may have any protocol method called on it;
+- a call on a value or on an attribute may run an instance's `__call__`;
+- attributes: a read or write of `.p` links each method or property named `p`, and `__getattr__`, `__getattribute__`, `__setattr__`, `__delattr__` and descriptor methods;
+- `K()` links `__new__`, `__init__` and `__del__` of `K` and its bases, and the `__call__` of each metaclass; a `class` statement links `__init_subclass__`, `__set_name__` and the metaclass methods;
+- a decorator is a call: at the definition, and from each call of the decorated function;
+- a function or class used as a value may be called; a function stored on a class or an object is a method of that name;
+- an `import` inside a function links the imported module.
+
+Two narrowings follow Python exactly. Special methods are looked up on the class of an object, so module functions with special names are never linked, except a module's own `__getattr__` for an attribute of that module. `self.x` in class `K` links only the attribute methods of the classes that can serve `self`: the subclasses of `K` and all their bases.
 
 Roll-up follows these call edges only. A function can read the constants of a module. For hashing, the function then depends on that module (section 3.3). But the function does not run the import-time code of that module. Thus it does not get the scope of that code.
 
@@ -642,11 +661,11 @@ Its code root is its identity. It is a candidate part. No log exists yet to admi
 
 | Item | Value |
 |---|---|
-| Code root | `5431f71c4f14366f6961accceed5295799401a0d5729b0226a240995d4ec41bc` |
+| Code root | `8d97cdd1bbe821851cbdd6c9d1f676091518d55a228ce77f78b779dc77bbe73b` |
 | Scope | none |
 | Scope root | `140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe` |
-| Nodes | 61 |
-| File SHA-256 | `eaba3e789f22e095fd23ec84a5d8593d92319a9151fb00594a7078d34517b560` |
+| Nodes | 74 |
+| File SHA-256 | `b987724e477efb4ee270deaf8bdd1e39dd34219cc3c52b0a6fd57e33c1a578fd` |
 | Python | 3.14 |
 
 To compute these values again:
@@ -697,15 +716,17 @@ Resolved: `Tag.copy_self` (beautifulsoup4), and `_SelectorContext.debug`, `Immut
 
 **Attacks** (`test_pkgmerkle.py`). 34 attacks try to hide a power behind a name. They include a fixed list over `os`, a module or function passed as a value, a literal import of `subprocess`, `builtins.exec`, `getattr` under another name, escape names, `sys.modules` through `getattr`, list aliases, and nine ways to rewrite a class list at run time. Each one shows the power or `TOP`. With the second analysis removed, the `exec` attack gets through. With lists allowed at class level, the list attack gets through. Thus the tests check the defenses.
 
-**Implicit calls** (`test_pkgmerkle.py`). Python runs some code that no call in the source names. 38 cases test this. Each case links a function to a socket only through one such mechanism. 4 cases are linked: the explicit method call that checks the test itself, a constructor that runs `__init__`, `raise E()`, and a default argument. 34 cases are not linked yet: operators, protocols such as `for`, `with` and `len`, properties and descriptors, `__getattr__` and `__setattr__`, `__new__` and metaclasses, class creation, decorators, functions passed as values, and imports inside functions. In each case the scope of the package is correct, because the target node has the scope. The scope of the calling node is too small, and its Merkle hash does not follow the target. The test lists these 34 cases by name. It fails when one of them changes.
+**Implicit calls** (`test_pkgmerkle.py`). 38 cases each link a function to a socket only through one mechanism: operators, protocols such as `for`, `with` and `len`, properties and descriptors, `__getattr__` and `__setattr__`, `__new__` and metaclasses, class creation, decorators, functions passed as values, and imports inside functions. In each case the function gets the socket's scope, and a change to the socket's code changes the function's Merkle hash.
+
+**The price of implicit calls.** Measured on the nine dependencies in the bank, against algobank 1.0.2. Nodes that reach `TOP` go from 657 to 1,606. Most of the rise has two causes. Real reflection is now flagged: frame inspection in beautifulsoup4 and typing_extensions. And `__getattr__` methods that forward every missing attribute (pypdf's `IndirectObject`, importlib_resources' `SpecLoaderAdapter`) can answer an attribute read on any object, because Algobank does not know types. In mammoth, 245 nodes gain `file`, mostly through the rule that a call on an attribute may run `ImageWriter.__call__`, a special method that writes files. dexweb, soupsieve and Algobank itself do not change.
 
 **Self-analysis.** Algobank analyzed `pkgmerkle.py` alone:
 
-- It has 61 nodes.
+- It has 74 nodes.
 - It has no scope.
 - It has no `TOP`.
 - Repeated runs give the same hashes.
-- A one-line change to `H()` changes `H`. It also changes the 8 nodes that call `H` directly or indirectly. The other 52 nodes keep their hashes.
+- A one-line change to `H()` changes `H`. It also changes the 8 nodes that call `H` directly or indirectly. The other 65 nodes keep their hashes.
 
 ### 10.4 Proof of the code root
 

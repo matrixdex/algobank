@@ -43,6 +43,37 @@ ESCAPE_ATTRS = {"__subclasses__", "__globals__", "__builtins__", "__code__", "__
                 "_getframe", "currentframe", "stack", "func_globals"}
 # builtins that only inspect an object: passing a module to them is not passing it on
 INSPECT_ONLY = {"hasattr", "isinstance", "issubclass", "type", "id", "callable", "len", "dir", "repr", "str", "bool"}
+# ---- implicit calls: Python runs these special methods without a call in the source ----------------------
+_OPS = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.MatMult: "matmul", ast.Div: "truediv", ast.FloorDiv: "floordiv",
+        ast.Mod: "mod", ast.Pow: "pow", ast.LShift: "lshift", ast.RShift: "rshift", ast.BitOr: "or", ast.BitXor: "xor",
+        ast.BitAnd: "and"}
+_CMP = {ast.Eq: ("__eq__",), ast.NotEq: ("__ne__", "__eq__"), ast.Lt: ("__lt__", "__gt__"), ast.LtE: ("__le__", "__ge__"),
+        ast.Gt: ("__gt__", "__lt__"), ast.GtE: ("__ge__", "__le__")}
+_UNARY = {ast.USub: ("__neg__",), ast.UAdd: ("__pos__",), ast.Invert: ("__invert__",), ast.Not: ("__bool__", "__len__")}
+ITER = ("__iter__", "__next__", "__getitem__", "__len__", "__length_hint__")
+TRUTH = ("__bool__", "__len__")
+TEXT = ("__str__", "__repr__", "__format__")
+HASH = ("__hash__", "__eq__")
+BUILTIN_DUNDERS = {
+    "len": ("__len__",), "str": TEXT, "repr": ("__repr__",), "format": TEXT, "ascii": ("__repr__",), "print": TEXT,
+    "hash": ("__hash__",), "abs": ("__abs__",), "int": ("__int__", "__index__", "__trunc__"), "float": ("__float__", "__index__"),
+    "complex": ("__complex__", "__float__", "__index__"), "bool": TRUTH, "round": ("__round__",), "divmod": ("__divmod__", "__rdivmod__"),
+    "pow": ("__pow__", "__rpow__"), "bytes": ("__bytes__", "__index__") + ITER, "dir": ("__dir__",), "reversed": ("__reversed__",) + ITER,
+    "iter": ITER, "next": ("__next__",), "list": ITER, "tuple": ITER, "set": ITER + HASH, "frozenset": ITER + HASH, "dict": ITER + HASH + ("keys",),
+    "sorted": ITER + ("__lt__", "__gt__"), "min": ITER + ("__lt__", "__gt__"), "max": ITER + ("__lt__", "__gt__"),
+    "sum": ITER + ("__add__", "__radd__"), "any": ITER + TRUTH, "all": ITER + TRUTH, "enumerate": ITER, "zip": ITER, "map": ITER + ("__call__",),
+    "filter": ITER + TRUTH + ("__call__",), "isinstance": ("__instancecheck__",), "issubclass": ("__subclasscheck__",),
+    "range": ("__index__",), "hex": ("__index__",), "oct": ("__index__",), "bin": ("__index__",), "chr": ("__index__",),
+    "callable": (), "vars": ("__dict__",), "super": (), "type": (), "id": (), "hasattr": ("__getattr__", "__getattribute__"),
+    "getattr": ("__getattr__", "__getattribute__"), "setattr": ("__setattr__",), "delattr": ("__delattr__",)}
+# an object handed to code Algobank does not analyze may have any of these called on it
+PROTOCOL = ("__call__", "__str__", "__repr__", "__format__", "__bytes__", "__fspath__", "__hash__", "__eq__", "__ne__", "__lt__",
+            "__le__", "__gt__", "__ge__", "__bool__", "__len__", "__length_hint__", "__iter__", "__next__", "__reversed__",
+            "__getitem__", "__setitem__", "__delitem__", "__contains__", "__missing__", "__index__", "__int__", "__float__",
+            "__enter__", "__exit__", "__aenter__", "__aexit__", "__aiter__", "__anext__", "__await__", "__get__", "__set__",
+            "__delete__", "__getattr__", "__getattribute__", "__setattr__", "__delattr__", "__copy__", "__deepcopy__",
+            "__reduce__", "__reduce_ex__", "__getstate__", "__setstate__", "__getnewargs__", "__getnewargs_ex__", "__instancecheck__",
+            "__subclasscheck__", "__mro_entries__", "__class_getitem__", "__init_subclass__", "__set_name__", "__del__", "keys")
 # attribute names that give write access to an object, or answer every read with code
 WRITE_ACCESS = {"__dict__", "__setattr__", "__delattr__", "__getattribute__", "__getattr__"}
 # a module used as a value (passed, stored, returned) brings everything it can do
@@ -214,8 +245,29 @@ class Package:
         if not ent: return []
         kind, q = ent
         if kind == "fn": return [f"{mod}:{q}"]
-        init = f"{mod}:{q}.__init__"
-        return [init] if init in self.funcs else []
+        # making an instance runs __new__ and __init__ of the class and its bases, a metaclass __call__, and later __del__
+        return self._family(q.split(".")[-1], ("__init__", "__new__", "__del__")) + \
+            [t for t in self.by_method.get("__call__", []) if self._class_of(t) in self.meta]
+
+    @staticmethod
+    def _class_of(nid):
+        parts = nid.split(":", 1)[1].split(".")
+        return parts[-2] if len(parts) >= 2 else None
+
+    def _family(self, cname, dunders):
+        """The methods with these names in class `cname` and its bases (by class name)."""
+        line = self.class_up.get(cname, {cname})
+        return [t for d in dunders for t in self.by_method.get(d, []) if self._class_of(t) in line]
+
+    def _dunders(self, dunders, within=None):
+        """Special methods with these names. Python looks them up on an object's class, never as module functions
+        (a module's own __getattr__ serves only attribute access on that module). `within`: only these classes."""
+        return [t for d in dunders for t in self.by_method.get(d, [])
+                if self._class_of(t) is not None and (within is None or self._class_of(t) in within)]
+
+    def _self_family(self, cname):
+        """Classes whose methods can serve self in class `cname`: self may be any subclass, with all of its bases."""
+        return {a for d in self.class_down.get(cname, {cname}) for a in self.class_up.get(d, {d})}
 
     def _name_refs(self, mod, name):
         """Nodes a read of module-level `name` in `mod` depends on."""
@@ -345,6 +397,34 @@ class Package:
             line = up.get(c, {c})
             return all(slotted.get(a, False) and all(b in down or b == "object" for b in bases.get(a, ())) for a in line)
         self.slotted = {c for c in down if all(nodict(d) for d in down[c])}   # c and all its subclasses have no __dict__
+        self.class_up = up                                    # class name -> itself and its bases, by name
+        self.class_down = down                                # class name -> itself and its subclasses
+        self.meta = {c for c in up if any("type" in bases.get(a, ()) for a in up[c])}
+        # a function stored on a class or an object under a name is a method of that name
+        fn_of = {id(fn): nid for nid, (fn, m, c) in self.funcs.items()}
+        for mod, (path, tree) in self.trees.items():
+            parent = {ch: nd for nd in ast.walk(tree) for ch in ast.iter_child_nodes(nd)}
+            for n in ast.walk(tree):
+                if not isinstance(n, (ast.Assign, ast.AnnAssign)) or n.value is None: continue
+                tgs = n.targets if isinstance(n, ast.Assign) else [n.target]
+                in_class = isinstance(parent.get(n), ast.ClassDef)
+                attrs = [t.attr if isinstance(t, ast.Attribute) else t.id for t in tgs
+                         if isinstance(t, ast.Attribute) or isinstance(t, ast.Name) and in_class]
+                if not attrs: continue
+                ids = set()
+                for v in ast.walk(n.value):
+                    if isinstance(v, ast.Name) and self.top.get(mod, {}).get(v.id, ("", ""))[0] == "fn":
+                        ids.add(f"{mod}:{self.top[mod][v.id][1]}")
+                    if isinstance(v, ast.Lambda):              # a lambda's code is part of the node that holds it
+                        holder, x = None, n
+                        while x in parent and holder is None:
+                            x = parent[x]
+                            if isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef)) and id(x) in fn_of: holder = fn_of[id(x)]
+                            elif isinstance(x, ast.ClassDef) and parent.get(x) is tree: holder = f"{mod}:={x.name}"
+                        ids.add(holder or f"{mod}:<module>")
+                for a in attrs:
+                    for i in sorted(ids):
+                        if i not in self.by_method.setdefault(a, []): self.by_method[a].append(i)
         self.taint = set()                                    # classes whose instances may hold a replaced list; None: all
         for kind, c in writes:
             if kind == "any": self.taint = None; break
@@ -436,7 +516,82 @@ class Package:
         ctx = None                                            # name bindings, built on the first getattr
         mod_skel = lambda m: f"{m}:<module>"
         parent = {ch: nd for nd in ast.walk(root) for ch in ast.iter_child_nodes(nd)}
-        for n in ast.walk(root):
+        walk = list(ast.walk(root))
+        for d in [d for x in walk if isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) for d in x.decorator_list]:
+            c = ast.Call(func=d, args=[], keywords=[]); walk.append(c); parent[d] = c   # a decorator is called
+        dunder = lambda *names: edges.update(self._dunders(names))
+        for n in walk:
+            # ---- implicit calls -------------------------------------------------------------------------
+            if isinstance(n, ast.BinOp) and type(n.op) in _OPS:
+                o = _OPS[type(n.op)]; dunder(f"__{o}__", f"__r{o}__")
+                if isinstance(n.op, ast.Mod): dunder(*TEXT)    # "%s" % x
+            elif isinstance(n, ast.AugAssign) and type(n.op) in _OPS:
+                o = _OPS[type(n.op)]; dunder(f"__i{o}__", f"__{o}__", f"__r{o}__")
+            elif isinstance(n, ast.UnaryOp):
+                dunder(*_UNARY.get(type(n.op), ()))
+            elif isinstance(n, ast.Compare):
+                for op in n.ops:
+                    if isinstance(op, (ast.In, ast.NotIn)): dunder("__contains__", *ITER, *HASH)
+                    else: dunder(*_CMP.get(type(op), ()))
+            elif isinstance(n, ast.Subscript):
+                dunder({ast.Load: "__getitem__", ast.Store: "__setitem__", ast.Del: "__delitem__"}[type(n.ctx)],
+                       "__missing__", "__class_getitem__", "__index__")
+            elif isinstance(n, (ast.For, ast.comprehension, ast.Starred, ast.YieldFrom)):
+                dunder(*ITER)
+                if isinstance(n, ast.comprehension) and n.is_async: dunder("__aiter__", "__anext__")
+            elif isinstance(n, ast.AsyncFor):
+                dunder("__aiter__", "__anext__")
+            elif isinstance(n, ast.With):
+                dunder("__enter__", "__exit__")
+            elif isinstance(n, ast.AsyncWith):
+                dunder("__aenter__", "__aexit__")
+            elif isinstance(n, ast.Await):
+                dunder("__await__")
+            elif isinstance(n, (ast.If, ast.While, ast.IfExp, ast.Assert, ast.BoolOp)):
+                dunder(*TRUTH)
+            elif isinstance(n, (ast.JoinedStr, ast.FormattedValue)):
+                dunder(*TEXT)
+            elif isinstance(n, (ast.Dict, ast.Set, ast.DictComp, ast.SetComp)):
+                dunder(*HASH)
+            elif isinstance(n, ast.Delete):
+                dunder("__del__")                             # the last reference may go
+            elif isinstance(n, ast.ExceptHandler):
+                dunder("__instancecheck__", "__subclasscheck__")
+            elif isinstance(n, ast.ClassDef) and n is not root:
+                # a class statement: __init_subclass__ and __set_name__, and the metaclass makes the class
+                dunder("__init_subclass__", "__set_name__", "__mro_entries__")
+                edges.update(t for d in ("__new__", "__init__", "__prepare__", "__call__") for t in self.by_method.get(d, [])
+                             if self._class_of(t) in self.meta)
+            elif isinstance(n, (ast.Assign, ast.AnnAssign)) and any(isinstance(t, (ast.Tuple, ast.List)) for t in (n.targets if isinstance(n, ast.Assign) else [n.target])):
+                dunder(*ITER)                                 # a, b = x unpacks
+            elif isinstance(n, (ast.Import, ast.ImportFrom)) and isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for nm, b in self._bind_imports(mod, n).items():   # an import in a function runs that module
+                    if b[0] in ("mod", "sym", "star"): edges.add(mod_skel(b[1]))
+            if isinstance(n, ast.Attribute):
+                p = parent.get(n)
+                if not (isinstance(p, ast.Call) and p.func is n):
+                    edges.update(self.by_method.get(n.attr, []))   # a property, or a method taken as a value
+                r = n.value.func if isinstance(n.value, ast.Call) else n.value
+                fam = None                                    # self.x: only self's class family can answer
+                if cls and isinstance(r, ast.Name) and (r.id == "super" or r.id in ("self", "cls")):
+                    fam = self._self_family(cls.split(".")[-1])
+                if isinstance(n.ctx, ast.Load):
+                    edges.update(self._dunders(("__getattr__", "__getattribute__"), fam)); dunder("__get__")
+                elif isinstance(n.ctx, ast.Store):
+                    edges.update(self._dunders(("__setattr__",), fam)); dunder("__set__")
+                else:
+                    edges.update(self._dunders(("__delattr__",), fam)); dunder("__delete__")
+                if isinstance(r, ast.Name) and r.id in names and names[r.id][0] == "mod":   # mod.x: that module's __getattr__
+                    m = names[r.id][1]
+                    edges.update(t for t in (f"{m}:__getattr__",) if t in self.funcs)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and (local is None or n.id not in local) and n.id not in names:
+                p = parent.get(n)
+                if not (isinstance(p, ast.Call) and p.func is n) and n.id in self.top.get(mod, {}):
+                    edges.update(self._sym_nodes(mod, n.id))   # a function or class taken as a value may be called
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in names and names[n.id][0] == "sym":
+                p = parent.get(n)
+                if not (isinstance(p, ast.Call) and p.func is n):
+                    edges.update(self._sym_nodes(names[n.id][1], names[n.id][2]))
             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
                 p = parent.get(n)
                 inspected = isinstance(p, ast.Call) and isinstance(p.func, ast.Name) and p.func.id not in names and (
@@ -486,6 +641,16 @@ class Package:
             if not isinstance(n, ast.Call): continue
             f = n.func
             ch = dotted(f)
+            builtin = isinstance(f, ast.Name) and f.id not in names and f.id not in self.top.get(mod, {}) and (local is None or f.id not in local) \
+                and hasattr(builtins, f.id)
+            known = isinstance(f, ast.Name) and (f.id in self.top.get(mod, {}) and f.id not in names or f.id in names and names[f.id][0] in ("sym", "mod"))
+            if builtin: dunder(*BUILTIN_DUNDERS.get(f.id, PROTOCOL if (n.args or n.keywords) else ()))
+            elif ch and ch[0] in names and names[ch[0]][0] == "ext":
+                if n.args or n.keywords: dunder(*PROTOCOL)    # outside code may use any protocol of what it gets
+            elif not known and not (isinstance(f, ast.Attribute)):
+                dunder("__call__")                            # a value is called: an instance's __call__ may run
+            if isinstance(f, ast.Attribute) and (ch is None or not (ch[0] in names and names[ch[0]][0] in ("mod",))):
+                dunder("__call__")                            # obj.attr() may hold any callable object
             first_const = n.args[0].value if n.args and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str) else None
             # builtins
             if isinstance(f, ast.Name) and f.id not in names and f.id not in self.top.get(mod, {}):
@@ -626,9 +791,11 @@ class Package:
         for mod, (path, tree) in self.trees.items():
             names_mod = mod_names[mod]
             skel = copy.deepcopy(tree)
-            class Drop(ast.NodeTransformer):
-                def visit_FunctionDef(self, n): return None
-                def visit_AsyncFunctionDef(self, n): return None
+            class Drop(ast.NodeTransformer):                  # a def runs its decorators and evaluates its defaults
+                def visit_FunctionDef(self, n):
+                    run = [ast.Call(func=d, args=[], keywords=[]) for d in n.decorator_list] + n.args.defaults + [x for x in n.args.kw_defaults if x]
+                    return ast.Expr(value=ast.Tuple(elts=run, ctx=ast.Load())) if run else None
+                visit_AsyncFunctionDef = visit_FunctionDef
             skel = ast.fix_missing_locations(Drop().visit(skel))
             e, c, fl, er, st, _ = self._scan(skel, mod, None, names_mod, skeleton=True)
             raw[f"{mod}:<module>"] = dict(own=H(ast.dump(skel, annotate_fields=False)), size=size(skel), edges=e,

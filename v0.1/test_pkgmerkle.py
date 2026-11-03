@@ -274,10 +274,9 @@ def test_inspecting_a_module_is_not_passing_it_on():
     src = "import os, socket\ndef f(x):\n    return hasattr(os, 'sep') and isinstance(x, socket.socket)\n"
     assert Package({"m.py": src}).nodes["m:f"]["caps"] == set()
 
-# ---- implicit calls: the audit -----------------------------------------------------------------------
+# ---- implicit calls -----------------------------------------------------------------------------------
 # Python runs code that no call in the source names. Each case links f() to a socket only implicitly.
-# SEEN must reach the socket. KNOWN_GAPS are the cases Algobank misses today: the test fails when one of them
-# changes, so a fix (or a regression) is noticed and the list is updated on purpose.
+# f must reach the socket's scope, and a change to the socket's code must change f's Merkle hash.
 
 NET = "        socket.socket()\n"
 def dunder(name, args="self", ret="return self"):
@@ -325,24 +324,17 @@ IMPLICIT = {
 }
 IMPLICIT_FILES = {"import inside a function": {"m.py": "def f():\n    import side\n", "side.py": "import socket\nsocket.socket()\n"}}
 
-KNOWN_GAPS = {
-    "a + b", "a == b", "a < b", "-a", "a[k]", "a[k] = v", "x in a", "for x in a", "with a", "if a", "len(a)", "str(a)",
-    "f-string", "dict key (__hash__)", "a()", "await a", "del a.x", "del a (__del__)", "property", "__getattr__",
-    "__getattribute__", "__setattr__", "descriptor __get__", "K() runs __new__", "K() runs metaclass __call__",
-    "class statement runs __init_subclass__", "class statement runs metaclass __new__", "class statement runs __set_name__",
-    "class decorator", "function decorator", "decorated function runs the wrapper", "callback passed as an argument",
-    "class attribute set to a function", "import inside a function",
-}
-
 def test_implicit_calls():
-    seen = set()
     cases = {k: {"m.py": "import socket\n" + v} for k, v in IMPLICIT.items()} | IMPLICIT_FILES
+    unseen, unhashed = [], []
     for name, files in cases.items():
         p = Package(files)
         assert any("network" in n["direct_caps"] for n in p.nodes.values()), name      # the socket call itself is seen
-        caps = p.nodes["m:f"]["caps"]
-        if "network" in caps or "TOP" in caps: seen.add(name)
-    assert set(cases) - seen == KNOWN_GAPS, sorted((set(cases) - seen) ^ KNOWN_GAPS)
+        if not {"network", "TOP"} & p.nodes["m:f"]["caps"]: unseen.append(name)
+        q = Package({k: v.replace("socket.socket()", "socket.socket(2)") for k, v in files.items()})
+        if p.nodes["m:f"]["merkle"] == q.nodes["m:f"]["merkle"]: unhashed.append(name)
+    assert not unseen, unseen
+    assert not unhashed, unhashed
 
 def test_prefixes():
     """Leaves and interior nodes use different prefixes."""
