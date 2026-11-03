@@ -1517,11 +1517,17 @@ cd v0.1/proofs &amp;&amp; coqc -Q . Algobank CodeRoot.v &amp;&amp; coqc -Q . Alg
 python3.14 -I v0.1/proofs/check_model.py
 </code></pre>
 <h3>10.8 Release</h3>
-<p><code>uv build</code> (or <code>python -m build</code>) makes two files:</p>
+<p>A release is built from a commit, in a fresh environment:</p>
+<pre><code>pip install --require-hashes -r build-requirements.txt
+python v0.1/release.py
+</code></pre>
+<p>It makes two files:</p>
 <ul>
 <li><code>dist/algobank-1.0.3-py3-none-any.whl</code></li>
 <li><code>dist/algobank-1.0.3.tar.gz</code></li>
 </ul>
+<p><strong>The build backend is pinned.</strong> <code>pyproject.toml</code> requires exactly <code>flit_core</code> 3.12.0. <code>build-requirements.txt</code> pins it to the file that is admitted to the bank, by its SHA-256. pip refuses any other file.</p>
+<p><strong>The build is reproducible.</strong> <code>release.py</code> takes all file times from the commit (<code>SOURCE_DATE_EPOCH</code>). flit_core sets the file permissions and owners. Thus a build of the same commit gives the same SHA-256 on any machine. Two clones at different paths, with different umasks, gave identical files. <code>release.py</code> refuses a working tree with uncommitted changes, and any other build backend. After an upload, anyone can build the commit again and compare the files with the files on PyPI.</p>
 <p>Both files contain only the <code>algobank</code> package, <code>LICENSE</code>, <code>README.md</code> and metadata. They do not contain tests, proofs, documents or <code>CLAUDE.md</code>. <code>twine check dist/*</code> passes.</p>
 <p>The maintainer uploads the files manually with the maintainer's own PyPI credentials. The repository contains no credentials. The code reads no environment variables.</p>
 <h3>10.9 Website and branches</h3>
@@ -1553,11 +1559,12 @@ python3.14 -I v0.1/proofs/check_model.py
 </tbody>
 </table>
 <p>Each website is a dex. dexweb builds it. <code>python run.py</code> in <code>site/</code> writes the website to <code>site/gen/</code>. dexweb publishes it to <code>web</code>.</p>
-<p><strong>The index is the bank.</strong> Its title is "algobank Algorithm Bank". At each build, <code>run.py</code> renders <code>bank.jsonl</code> from <code>live</code> into the index template in <code>site/config.json</code>. It also checks the bank. It downloads each banked file with pip. It checks the SHA-256 of each file against its record. It runs, for each record, the version of Algobank that the record names (<code>algobanked_by</code>), in its own Python process. That version is itself in the bank: its PyPI file or its source commit. It checks the code root against the record. A record without a file is computed from the source commit that it names. Any difference stops the build. The index has these items:</p>
+<p><strong>The index is the bank.</strong> Its title is "algobank Algorithm Bank". At each build, <code>run.py</code> renders <code>bank.jsonl</code> from <code>live</code> into the index template in <code>site/config.json</code>. It also checks the bank. It checks that <code>live</code> only grows: each commit keeps every earlier line of <code>bank.jsonl</code>, unchanged, and every earlier record of <code>known.json</code>. A commit that removes or changes one stops the build. It downloads each banked file with pip. It checks the SHA-256 of each file against its record. It runs, for each record, the version of Algobank that the record names (<code>algobanked_by</code>), in its own Python process. That version is itself in the bank: its PyPI file or its source commit. It checks the code root against the record. A record without a file is computed from the source commit that it names. Any difference stops the build. The index has these items:</p>
 <ul>
 <li>Five lines that say what Algobank is. They are plain text in the page, for people and for agents. One line shows at a time, for 4 seconds. A pointer on the line stops the motion. With reduced motion set, all five lines show and nothing moves.</li>
 <li>A search bar. It takes <code>package</code> or <code>package v1.2.3</code>. A link can carry <code>?q=</code>.</li>
 <li>A message for a version that is not in the bank: <code>package v1.2.3 are not algobanked</code>. The admitted versions of the package show below it.</li>
+<li>A rejected version shows "rejected" and the date in red, and its reason in the details. A rejection is a line with <code>rejected</code> and <code>reason</code> that names the version by the hashes of its admission. The admission line stays: lines are never removed. A record made by a rejected version of Algobank carries a note to algobank it again.</li>
 <li>The records as a table. The newest admitted record comes first. On wide screens (1,045 pixels and wider), each field has its own column. On narrower screens, the table shows the package and its findings. A click on an entry opens all of its fields below it.</li>
 <li>The SHA-256 of each file. The page holds the full hash. The table shows its first eight characters. On narrow screens, the details show as much as fits. A button copies the full hash.</li>
 <li>The code root of each version as a strip. Each slice is one node, in a fixed order, sized by its code. Dark: the node reaches nothing. Grey: it reaches files. Red: it reaches the network, processes, the environment, native code or <code class='top'>TOP</code>. Yellow: its own code changed since the previous banked version of the package. The other nodes of that version are dimmed. The label of the strip holds the full code root and a summary. In the details, a button copies the full code root.</li>
