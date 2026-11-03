@@ -291,23 +291,35 @@ The scope of a package is the union of the scopes of its nodes. The scope root i
 
 Algobank resolves an import of a package module with a literal name as a normal import.
 
+**Values and names that carry power.** A capability does not need a call to travel:
+
+- A module or function used as a value (passed, stored or returned) brings its effects to the node that uses it. `run(subprocess)` gives `process`. `os` as a value gives `env`, `file` and `process`. `importlib`, `builtins`, `sys`, `inspect`, `operator`, `gc` and `types` as values give `TOP`. A module passed to `hasattr`, `isinstance`, `type` and similar only inspects it, and brings nothing.
+- An import of an outside module with a literal name (`import_module("subprocess")`, `__import__("os")`) brings that module's effects.
+- `builtins.exec` and the other builtins reached through `builtins`, `__builtins__`, or a builtin used as a value (`g = getattr`) give `TOP`.
+- Escape attributes give `TOP` wherever they appear: `__subclasses__`, `__globals__`, `__builtins__`, `__code__`, frames (`_getframe`, `f_globals`, `f_locals`, `f_back`, `inspect.stack`).
+- `x.__setattr__(name, v)`, `object.__setattr__(x, name, v)` and `__getattribute__` calls with a computed name are like `setattr` and `getattr`: `TOP`.
+
 `TOP` goes to each caller. A `TOP` node cannot get a result such as "uses no network". It can get only results that are true for all of its possible behaviors.
 
 **Names from fixed lists.** Algobank resolves `getattr(x, name)` when the code fixes every value of `name`:
 
 - a string literal;
-- a loop or comprehension over a literal tuple, list or set of strings, or over a slice of one;
-- one element of such a list, such as `keys[i]`;
-- a loop over a list that the package fixes on its classes: `__slots__`, the fields of a dataclass, or a class-level tuple of strings.
+- a loop or comprehension directly over a literal tuple, list or set of strings, or over a slice of one;
+- a local name assigned a literal tuple, and one element of it, such as `keys[i]`;
+- a loop over a tuple that the package fixes on its classes: `__slots__`, the fields of a dataclass, or a class-level tuple of strings.
 
-The name must have no other binding in the function. A local list must not change in place. Then `getattr(x, name)` is like the call `x.name()` for each possible name: it gets an edge to each method with that name. A `setattr` or `delattr` by such a name is like a plain write.
+The name must have no other binding in the function. A local list or set is not accepted, because a call could change it through an alias. Strings and tuples cannot change.
 
-A class-level list counts only if no code in the package can change it:
+**A resolved name is never weaker than the same name written by hand.** For each possible name, `getattr(x, name)` gets an edge to each method with that name, and every table entry for that name applies: `system` gives `process`, `write_text` gives `file`, `exec` and `loads` give `TOP`. If `x` is an outside module, the effects of that module's attribute apply. Escape names (`__subclasses__`, `__globals__`, frames) and names that give write access (`__dict__`, `__setattr__`, `__delattr__`, `__getattribute__`, `__getattr__`) stay `TOP`. `operator.attrgetter`, `operator.methodcaller` and `inspect.getattr_static` follow the same rules. A `setattr` or `delattr` by a fixed name is like a plain write.
 
-- no other write goes to an attribute with that name;
-- no write with a computed name goes through a class of the same family (a base or a subclass);
-- no write with a computed name goes through an instance of such a class, unless each class in the family uses `__slots__`. An instance without a `__dict__` cannot hide a class attribute;
-- no write with a computed name goes through any other object.
+**A list read from a class counts only if nothing can change it at run time.**
+
+- It must be a tuple.
+- No other code writes an attribute with that name. No method or property has that name.
+- No code writes an item of it, keeps an alias of the dataclass fields, calls `make_dataclass`, or applies `dataclass` at run time.
+- No code assigns `__class__`, `__bases__` or `__dict__`, keeps an alias of a `__dict__`, makes a class with `type()`, or defines `__getattribute__`.
+- No write with a computed name goes through a class of the same family, or through an instance of it that has a `__dict__`. A write through an instance of a fully slotted family can only set its slots.
+- Nothing else in the package is dynamic: no `exec`, `eval`, deserialization, computed import, computed attribute access or patching. Algobank analyzes the package once with the lists. If any such node remains, it analyzes the package again without them.
 
 Assumption: classes outside the package do not subclass classes of the package.
 
@@ -630,11 +642,11 @@ Its code root is its identity. It is a candidate part. No log exists yet to admi
 
 | Item | Value |
 |---|---|
-| Code root | `ff6bf50fdfcfa74914c3eaa4b2133a4f667c437bdd2e28848b1131c48f69abca` |
+| Code root | `5431f71c4f14366f6961accceed5295799401a0d5729b0226a240995d4ec41bc` |
 | Scope | none |
 | Scope root | `140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe` |
-| Nodes | 54 |
-| File SHA-256 | `21d8916046a3c3bac50449eb74522ed7668cb1b2128c3b89a73225c80bbe8adb` |
+| Nodes | 61 |
+| File SHA-256 | `eaba3e789f22e095fd23ec84a5d8593d92319a9151fb00594a7078d34517b560` |
 | Python | 3.14 |
 
 To compute these values again:
@@ -674,24 +686,26 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))"
 
 The dexweb numbers come from one small package with one author. Do not make general conclusions from them.
 
-**Names from fixed lists** (`test_pkgmerkle.py`). Measured on the nine dependencies in the bank, before and after the rule:
+**Names from fixed lists** (`test_pkgmerkle.py`). Measured on the nine dependencies in the bank, against algobank 1.0.2:
 
-- nodes with dynamic code: 33 before, 27 after;
-- nodes that reach `TOP`: 657 before, 591 after;
+- nodes with dynamic code: 33 before, 35 after;
+- nodes that reach `TOP`: 657 before, 632 after;
 - soupsieve: 62 nodes reach `TOP` before, 0 after;
 - nodes that get a new concrete scope: 0.
 
-The resolved nodes are `Tag.copy_self` (beautifulsoup4), `Color.as_operator` (pypdf), and `_SelectorContext.debug`, `Immutable.__eq__`, `Immutable.__repr__` and `_pickle` (soupsieve). The other nodes take names from data, forward attributes, or run in a class family with computed writes. They keep `TOP`. Escape tests keep `TOP` for a rebound name, a list changed in place, a computed collection, a list written elsewhere, and computed writes through a class, an instance with a `__dict__` or another object.
+Resolved: `Tag.copy_self` (beautifulsoup4), and `_SelectorContext.debug`, `Immutable.__eq__`, `Immutable.__repr__` and `_pickle` (soupsieve). pypdf's `Color.as_operator` reads a class tuple, but pypdf has other dynamic code, so it keeps `TOP`. The new detections found 7 nodes that algobank 1.0.2 missed: frames and `inspect.stack` in beautifulsoup4, importlib_resources and typing_extensions, `__subclasses__` in cobble, and a `__getattribute__` that reads by a computed name in pypdf.
+
+**Attacks** (`test_pkgmerkle.py`). 34 attacks try to hide a power behind a name. They include a fixed list over `os`, a module or function passed as a value, a literal import of `subprocess`, `builtins.exec`, `getattr` under another name, escape names, `sys.modules` through `getattr`, list aliases, and nine ways to rewrite a class list at run time. Each one shows the power or `TOP`. With the second analysis removed, the `exec` attack gets through. With lists allowed at class level, the list attack gets through. Thus the tests check the defenses.
 
 **Implicit calls** (`test_pkgmerkle.py`). Python runs some code that no call in the source names. 38 cases test this. Each case links a function to a socket only through one such mechanism. 4 cases are linked: the explicit method call that checks the test itself, a constructor that runs `__init__`, `raise E()`, and a default argument. 34 cases are not linked yet: operators, protocols such as `for`, `with` and `len`, properties and descriptors, `__getattr__` and `__setattr__`, `__new__` and metaclasses, class creation, decorators, functions passed as values, and imports inside functions. In each case the scope of the package is correct, because the target node has the scope. The scope of the calling node is too small, and its Merkle hash does not follow the target. The test lists these 34 cases by name. It fails when one of them changes.
 
 **Self-analysis.** Algobank analyzed `pkgmerkle.py` alone:
 
-- It has 54 nodes.
+- It has 61 nodes.
 - It has no scope.
 - It has no `TOP`.
 - Repeated runs give the same hashes.
-- A one-line change to `H()` changes `H`. It also changes the 8 nodes that call `H` directly or indirectly. The other 45 nodes keep their hashes.
+- A one-line change to `H()` changes `H`. It also changes the 8 nodes that call `H` directly or indirectly. The other 52 nodes keep their hashes.
 
 ### 10.4 Proof of the code root
 

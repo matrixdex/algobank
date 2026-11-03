@@ -193,10 +193,11 @@ def test_computed_instance_write_on_slotted_class_keeps_lists():
           "    def set(self, k, v):\n        super().__setattr__(k, v)\n"
     assert caps_of(src, "m:C.f") == {"network"}
 
-def test_computed_instance_write_in_unrelated_class_keeps_lists():
+def test_any_dynamic_code_in_the_package_disables_class_lists():
+    """A computed write anywhere could rewrite a list at run time, so lists read from classes are not trusted."""
     src = "class C:\n    _fields = ('go',)\n    def f(self):\n        return [getattr(self, x) for x in self._fields]\n" \
           "class Other:\n    def set(self, k, v):\n        self.__setattr__(k, v)\n"
-    assert caps_of(src, "m:C.f") == {"network"}
+    assert "TOP" in caps_of(src, "m:C.f")
 
 def test_getattr_name_changes_the_hash():
     """The resolved names are edges, so a change to K.go changes f's Merkle hash."""
@@ -204,6 +205,74 @@ def test_getattr_name_changes_the_hash():
     a = Package({"m.py": NETWORK_GO + src})
     b = Package({"m.py": NETWORK_GO.replace("socket.socket()", "socket.socket(2)") + src})
     assert "m:f" in changed(a, b)
+
+# ---- attacks on getattr names: none may hide what the code can do ---------------------------------------
+# Each attack is code an attacker could write. The node must show the danger (its scope, or TOP).
+
+LIST_READER = "class C:\n    _fields = ('a',)\n    def f(self):\n        return [getattr(self, x) for x in self._fields]\n"
+
+ATTACKS = {   # name: (source, node, a scope that must be present: any of these)
+    "fixed list over os": ("import os\ndef f():\n    for n in ('system',):\n        getattr(os, n)('x')\n", "m:f", {"process", "TOP"}),
+    "literal getattr on os": ("import os\ndef f():\n    getattr(os, 'system')('x')\n", "m:f", {"process", "TOP"}),
+    "fixed list on a parameter that may be os": ("def f(m):\n    for n in ('system',):\n        getattr(m, n)('x')\n", "m:f", {"process", "TOP"}),
+    "module passed as a value": ("import subprocess\ndef run(m):\n    return m.check_output('x')\ndef f():\n    return run(subprocess)\n", "m:f", {"process"}),
+    "function passed as a value": ("from os import system\ndef run(g):\n    return g('x')\ndef f():\n    return run(system)\n", "m:f", {"process"}),
+    "module stored as a value": ("import socket\nclass K:\n    def f(self):\n        self.m = socket\n", "m:K.f", {"network"}),
+    "literal import_module": ("import importlib\ndef f():\n    importlib.import_module('subprocess').run('x')\n", "m:f", {"process"}),
+    "literal __import__": ("def f():\n    __import__('os').system('x')\n", "m:f", {"process"}),
+    "builtins.exec": ("import builtins\ndef f(s):\n    builtins.exec(s)\n", "m:f", {"TOP"}),
+    "getattr on builtins": ("import builtins\ndef f(s):\n    getattr(builtins, 'exec')(s)\n", "m:f", {"TOP"}),
+    "__builtins__": ("def f(s):\n    __builtins__['eval'](s)\n", "m:f", {"TOP"}),
+    "getattr under another name": ("import os\ndef f():\n    g = getattr\n    g(os, 'system')('x')\n", "m:f", {"process", "TOP"}),
+    "exec as a value": ("def run(g, s):\n    return g(s)\ndef f(s):\n    return run(exec, s)\n", "m:f", {"TOP"}),
+    "dunder name in a fixed list": ("def f(x):\n    for n in ('__subclasses__',):\n        getattr(type(x), n)()\n", "m:f", {"TOP"}),
+    "escape attribute written out": ("def f(x):\n    return type(x).__subclasses__()\n", "m:f", {"TOP"}),
+    "frame escape": ("import sys\ndef f():\n    return sys._getframe().f_globals\n", "m:f", {"TOP"}),
+    "sys.modules through getattr": ("import sys\ndef f(k, v):\n    getattr(sys, 'modules')[k] = v\n", "m:f", {"TOP"}),
+    "operator.attrgetter": ("import operator\ndef f(o, n):\n    return operator.attrgetter(n)(o)\n", "m:f", {"TOP"}),
+    "inspect.getattr_static": ("import inspect\ndef f(o, n):\n    return inspect.getattr_static(o, n)\n", "m:f", {"TOP"}),
+    "object.__setattr__ by a computed name": ("def f(o, k, v):\n    object.__setattr__(o, k, v)\n", "m:f", {"TOP"}),
+    "obj.__setattr__ by a computed name": ("def f(o, k, v):\n    o.__setattr__(k, v)\n", "m:f", {"TOP"}),
+    "local list changed through an alias": ("import os\ndef g(l):\n    l.append('system')\ndef f():\n    names = ['path']\n    g(names)\n    for n in names:\n        getattr(os, n)\n", "m:f", {"TOP", "process"}),
+    # rewriting a list read from a class, from elsewhere in the package
+    "list rewritten by exec": (LIST_READER + "def g(s):\n    exec(s)\n", "m:C.f", {"TOP"}),
+    "list rewritten by deserialization": (LIST_READER + "import pickle\ndef g(b):\n    return pickle.loads(b)\n", "m:C.f", {"TOP"}),
+    "class list is a list, not a tuple": ("class C:\n    _fields = ['a']\n    def f(self):\n        return [getattr(self, x) for x in self._fields]\n", "m:C.f", {"TOP"}),
+    "object changes class": (LIST_READER + "def g(o, k):\n    o.__class__ = k\n", "m:C.f", {"TOP"}),
+    "class made at run time": (LIST_READER + "def g(d):\n    return type('X', (C,), d)\n", "m:C.f", {"TOP"}),
+    "__dict__ alias written": (LIST_READER + "def g(o, k, v):\n    d = o.__dict__\n    d[k] = v\n", "m:C.f", {"TOP"}),
+    "property hides the list": (LIST_READER + "class D(C):\n    @property\n    def _fields(self):\n        return ('x',)\n", "m:C.f", {"TOP"}),
+    "__getattribute__ answers reads": (LIST_READER + "class D(C):\n    def __getattribute__(self, n):\n        return ('x',)\n", "m:C.f", {"TOP"}),
+    "globals() rewritten": (LIST_READER + "def g(v):\n    globals()['C'] = v\n", "m:C.f", {"TOP"}),
+    "dataclass fields written": ("from dataclasses import dataclass\n@dataclass\nclass D:\n    a: int\ndef g(k, v):\n    D.__dataclass_fields__[k] = v\n"
+                                "def f(i):\n    return [getattr(i, k) for k in i.__dataclass_fields__]\n", "m:f", {"TOP"}),
+    "dataclass fields aliased": ("from dataclasses import dataclass\n@dataclass\nclass D:\n    a: int\ndef g():\n    return D.__dataclass_fields__\n"
+                                 "def f(i):\n    return [getattr(i, k) for k in i.__dataclass_fields__]\n", "m:f", {"TOP"}),
+    "dataclass made at run time": ("from dataclasses import dataclass, make_dataclass\n@dataclass\nclass D:\n    a: int\ndef g(n):\n    return make_dataclass('X', n)\n"
+                                   "def f(i):\n    return [getattr(i, k) for k in i.__dataclass_fields__]\n", "m:f", {"TOP"}),
+}
+
+def test_attacks_on_getattr_names():
+    missed = []
+    for name, (src, node, danger) in ATTACKS.items():
+        caps = Package({"m.py": src}).nodes[node]["caps"]
+        if not caps & danger: missed.append((name, sorted(caps)))
+    assert not missed, missed
+
+def test_fixed_names_match_hand_written_access():
+    """A literal name is no more and no less than writing the attribute out: metadata is plain, write access is TOP."""
+    meta = "def f(b):\n    return getattr(b, '__annotations__', {})\n"
+    assert Package({"m.py": meta}).nodes["m:f"]["caps"] == set()
+    for name in ("__dict__", "__setattr__", "__getattribute__", "__globals__"):
+        assert "TOP" in Package({"m.py": f"def f(b):\n    return getattr(b, '{name}')\n"}).nodes["m:f"]["caps"], name
+    assert Package({"m.py": "import operator\ndef f(o):\n    return operator.attrgetter('name')(o)\n"}).nodes["m:f"]["caps"] == set()
+    assert "process" in Package({"m.py": "import operator, os\ndef f():\n    return operator.attrgetter('system')(os)\n"}).nodes["m:f"]["caps"]
+    assert Package({"m.py": "import sys\ndef f():\n    return getattr(sys, 'maxsize', 0)\n"}).nodes["m:f"]["caps"] == set()
+
+def test_inspecting_a_module_is_not_passing_it_on():
+    """hasattr(os, x) and isinstance(x, socket.socket) look at a module; they never call it."""
+    src = "import os, socket\ndef f(x):\n    return hasattr(os, 'sep') and isinstance(x, socket.socket)\n"
+    assert Package({"m.py": src}).nodes["m:f"]["caps"] == set()
 
 # ---- implicit calls: the audit -----------------------------------------------------------------------
 # Python runs code that no call in the source names. Each case links f() to a socket only implicitly.

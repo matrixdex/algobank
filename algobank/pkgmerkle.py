@@ -32,6 +32,23 @@ DESER_MODS = {"pickle", "marshal", "dill", "shelve", "cloudpickle"}
 FILE_ATTRS = {"write_text", "read_text", "write_bytes", "read_bytes", "unlink", "rmtree", "mkdir", "touch"}
 DYN_NAMES = {"eval": "dyn-exec", "exec": "dyn-exec", "compile": "dyn-exec", "globals": "dyn-attr",
              "locals": "dyn-attr", "vars": "dyn-attr"}
+# names that are dangerous whatever object holds them: reached by a call, a getattr or as a value, each is flagged
+NAME_FLAGS = dict(DYN_NAMES, __import__="dyn-import", import_module="dyn-import", entry_points="dyn-import",
+                  load="dyn-exec", loads="dyn-exec", Unpickler="dyn-exec", breakpoint="dyn-exec",
+                  getattr="dyn-attr", setattr="dyn-attr", delattr="dyn-attr", attrgetter="dyn-attr",
+                  methodcaller="dyn-attr", getattr_static="dyn-attr")
+# attributes that escape any sandbox: frames, globals, builtins, code objects, every subclass of a type
+ESCAPE_ATTRS = {"__subclasses__", "__globals__", "__builtins__", "__code__", "__closure__", "__reduce__", "__reduce_ex__",
+                "f_globals", "f_locals", "f_builtins", "f_back", "gi_frame", "cr_frame", "ag_frame", "tb_frame",
+                "_getframe", "currentframe", "stack", "func_globals"}
+# builtins that only inspect an object: passing a module to them is not passing it on
+INSPECT_ONLY = {"hasattr", "isinstance", "issubclass", "type", "id", "callable", "len", "dir", "repr", "str", "bool"}
+# attribute names that give write access to an object, or answer every read with code
+WRITE_ACCESS = {"__dict__", "__setattr__", "__delattr__", "__getattribute__", "__getattr__"}
+# a module used as a value (passed, stored, returned) brings everything it can do
+MODULE_VALUE = {"os": ("caps", {"env", "file", "process"}), "importlib": ("flag", "dyn-import"), "builtins": ("flag", "dyn-exec"),
+                "sys": ("flag", "dyn-patch"), "inspect": ("flag", "dyn-attr"), "operator": ("flag", "dyn-attr"),
+                "gc": ("flag", "dyn-attr"), "types": ("flag", "dyn-exec")}
 
 def size(n): return sum(1 for _ in ast.walk(n))
 
@@ -146,6 +163,12 @@ class Package:
         self._name_tables()
         self.nodes = {}
         self._analyze()
+        if self.lists and any(n["direct_flags"] & {"dyn-exec", "dyn-patch", "dyn-import", "dyn-attr"} for n in self.nodes.values()):
+            # Something else in the package is dynamic, and it could rewrite a list at run time: analyze again
+            # without the lists read from classes. Literal names and literal tuples stay resolved: nothing can change them.
+            self.lists, self.taint = {}, None
+            self.nodes = {}
+            self._analyze()
 
     def _collect(self, mod, body, cls):
         for n in body:
@@ -212,16 +235,18 @@ class Package:
 
     # ---- names drawn from fixed lists ---------------------------------------
     # getattr(x, name) is TOP unless every value `name` can take is fixed by the code: a string literal, a loop
-    # over a literal collection, or a loop over a list the package fixes on its classes (__slots__, dataclass
-    # fields, a class-level tuple of strings). Such a list counts only if no code in the package can change it:
-    # a computed attribute write through a class, or through an instance that has a __dict__, could replace it.
+    # over a literal collection, a literal tuple, or a tuple the package fixes on its classes (__slots__, dataclass
+    # fields, a class-level tuple of strings). A resolved name is never weaker than writing x.<name> by hand: the
+    # same tables apply, and escape names stay TOP. A tuple read from a class counts only if nothing can change
+    # it at run time; if anything else in the package is dynamic, Package analyzes again without these tuples.
     # Assumption (closed world): classes outside the package do not subclass package classes.
     def _name_tables(self):
         cdefs = {}                                            # class name -> ClassDef nodes (by name: over-approximate)
         for mod, (path, tree) in self.trees.items():
             for n in ast.walk(tree):
                 if isinstance(n, ast.ClassDef): cdefs.setdefault(n.name, []).append(n)
-        lit = lambda v: isinstance(v, (ast.Tuple, ast.List, ast.Set)) and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in v.elts)
+        lit = lambda v: isinstance(v, ast.Tuple) and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in v.elts)
+        strs = lambda v: isinstance(v, (ast.Tuple, ast.List)) and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in v.elts)
         self.lists, bad = {}, set()                           # class-level list name -> union of its literal values
         bases, slotted = {}, {}
         for name, defs in cdefs.items():
@@ -235,7 +260,9 @@ class Package:
                             if not isinstance(t, ast.Name) or st.value is None: continue
                             if len(tg) == 1 and lit(st.value): self.lists.setdefault(t.id, set()).update(e.value for e in st.value.elts)
                             else: bad.add(t.id)
-                            if t.id == "__slots__": own = {e.value for e in st.value.elts} if lit(st.value) else {"__dict__"}
+                            if t.id == "__slots__": own = {e.value for e in st.value.elts} if strs(st.value) else {"__dict__"}
+                    elif isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        bad.add(st.name)                      # a method or property by that name hides the list
                 slotted[name] = slotted.get(name, True) and own is not None and "__dict__" not in own
                 deco = [d.func if isinstance(d, ast.Call) else d for d in c.decorator_list]
                 if any((d.id if isinstance(d, ast.Name) else d.attr if isinstance(d, ast.Attribute) else "") == "dataclass" for d in deco):
@@ -253,7 +280,31 @@ class Package:
                     if isinstance(n, ast.ClassDef) and fn is not None and parent.get(fn) is n: return n.name, fn
                 return None, fn
             for n in ast.walk(tree):
-                if isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del)): bad.add(n.attr)
+                if isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del)):
+                    bad.add(n.attr)
+                    if n.attr in ("__class__", "__bases__", "__dict__"): writes.append(("any", None))   # an object changes class
+                if isinstance(n, ast.Subscript) and isinstance(n.ctx, (ast.Store, ast.Del)) and isinstance(n.value, ast.Attribute):
+                    bad.add(n.value.attr)                     # x.__dataclass_fields__[k] = v
+                    if n.value.attr == "__annotations__": bad.add("__dataclass_fields__")
+                if isinstance(n, ast.Attribute) and n.attr in ("__dataclass_fields__", "__dict__") and isinstance(n.ctx, ast.Load):
+                    p = parent.get(n)                         # only read in place; an alias could be written
+                    gp = parent.get(p)
+                    safe = (isinstance(p, (ast.For, ast.AsyncFor, ast.comprehension)) and p.iter is n) \
+                        or (isinstance(p, ast.Subscript) and p.value is n and isinstance(p.ctx, ast.Load)) \
+                        or (isinstance(p, ast.Attribute) and p.attr in ("keys", "items", "values", "get") and isinstance(gp, ast.Call) and gp.func is p) \
+                        or (isinstance(p, ast.Compare) and n in p.comparators)
+                    if not safe:
+                        if n.attr == "__dict__": writes.append(("any", None))
+                        else: bad.add("__dataclass_fields__")
+                if isinstance(n, ast.Name) and n.id == "make_dataclass" or isinstance(n, ast.Attribute) and n.attr == "make_dataclass":
+                    bad.add("__dataclass_fields__")
+                if isinstance(n, ast.Call) and (isinstance(n.func, ast.Name) and n.func.id == "dataclass" or isinstance(n.func, ast.Attribute) and n.func.attr == "dataclass") \
+                        and n.args and not isinstance(parent.get(n), ast.ClassDef):
+                    bad.add("__dataclass_fields__")           # dataclass(cls) applied at run time
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "type" and len(n.args) >= 3:
+                    writes.append(("any", None))              # a class made at run time
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "__getattribute__":
+                    writes.append(("any", None))              # every attribute read can be answered by code
                 if isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name): bad.add(n.target.id)
                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("append", "extend", "insert", "remove", "pop", "clear", "update", "add", "discard") \
                         and isinstance(n.func.value, ast.Attribute):
@@ -293,11 +344,19 @@ class Package:
         def nodict(c):                                        # every class of c's line is slotted, and all bases are known
             line = up.get(c, {c})
             return all(slotted.get(a, False) and all(b in down or b == "object" for b in bases.get(a, ())) for a in line)
+        self.slotted = {c for c in down if all(nodict(d) for d in down[c])}   # c and all its subclasses have no __dict__
         self.taint = set()                                    # classes whose instances may hold a replaced list; None: all
         for kind, c in writes:
             if kind == "any": self.taint = None; break
             fam = {x for d in down.get(c, {c}) for x in up.get(d, {d})} | {x for u in up.get(c, {c}) for x in down.get(u, {u})}
             if kind == "cls" or not all(nodict(d) for d in down.get(c, {c})): self.taint |= fam
+
+    def _slotted_self(self, recv, ctx):
+        """Whether `recv` is the instance (self, or super()) of a class whose whole family is slotted."""
+        r = recv.func if isinstance(recv, ast.Call) else recv
+        if not (ctx and ctx["cls"] and isinstance(r, ast.Name)): return False
+        is_self = r.id == "super" or r.id == ctx["first"] and ctx["binds"].get(r.id) == [("arg", None)]
+        return is_self and ctx["cls"] in self.slotted
 
     def _elems(self, e, ctx, depth=0):
         """The strings iterating `e` can yield, if the code fixes them; otherwise None."""
@@ -311,7 +370,7 @@ class Package:
         if isinstance(e, ast.Attribute) and e.attr in self.lists:
             if self.taint is None: return None
             r = e.value.func if isinstance(e.value, ast.Call) else e.value
-            mine = ctx["cls"] and isinstance(r, ast.Name) and (r.id in ("self", "cls", "super") or r.id == ctx["first"])
+            mine = ctx["cls"] and isinstance(r, ast.Name) and (r.id == "super" or r.id == ctx["first"] and ctx["binds"].get(r.id) == [("arg", None)])
             if (ctx["cls"] in self.taint) if mine else self.taint: return None
             return set(self.lists[e.attr])
         if isinstance(e, ast.Name):                           # a local name assigned only from fixed lists
@@ -319,6 +378,7 @@ class Package:
             if not binds or any(k != "assign" for k, _ in binds): return None
             out = set()
             for _, v in binds:
+                if isinstance(v, (ast.List, ast.Set, ast.Dict)): return None   # a list can be changed through an alias
                 s = self._elems(v, ctx, depth + 1)
                 if s is None: return None
                 out |= s
@@ -352,7 +412,7 @@ class Package:
                 if isinstance(p, (ast.For, ast.AsyncFor, ast.comprehension)) and p.target is n: add(n.id, "loop", p.iter)
                 elif isinstance(p, ast.Assign) and p.targets == [n]: add(n.id, "assign", p.value)
                 else: add(n.id, "other", None)
-            elif isinstance(n, ast.arg): add(n.arg, "other", None)
+            elif isinstance(n, ast.arg): add(n.arg, "arg", None)
             elif isinstance(n, ast.Subscript) and isinstance(n.ctx, (ast.Store, ast.Del)) and isinstance(n.value, ast.Name):
                 add(n.value.id, "other", None)                # names[0] = x changes a list in place
             elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) \
@@ -375,7 +435,20 @@ class Package:
         stats = {"cross": 0, "cha": 0}
         ctx = None                                            # name bindings, built on the first getattr
         mod_skel = lambda m: f"{m}:<module>"
+        parent = {ch: nd for nd in ast.walk(root) for ch in ast.iter_child_nodes(nd)}
         for n in ast.walk(root):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                p = parent.get(n)
+                inspected = isinstance(p, ast.Call) and isinstance(p.func, ast.Name) and p.func.id not in names and (
+                    p.func.id in INSPECT_ONLY and n in p.args                              # hasattr(os, x): look, never call
+                    or p.func.id in ("getattr", "setattr", "delattr") and p.args and p.args[0] is n)   # the getattr rule decides
+                used = (isinstance(p, ast.Attribute) and p.value is n) or (isinstance(p, ast.Call) and p.func is n) or inspected
+                if n.id in names and names[n.id][0] == "ext" and not used:
+                    self._ext_effects(names[n.id][1], caps, flags, edges, value=True)    # an outside module or function, passed on
+                elif n.id not in names and n.id not in self.top.get(mod, {}) and (local is None or n.id not in local):
+                    if n.id == "__builtins__": flags.add("dyn-exec")
+                    elif not used and n.id in NAME_FLAGS: flags.add(NAME_FLAGS[n.id])     # f = getattr; f(os, "system")
+                    elif not used and n.id == "open": caps.add("file")
             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in names and names[n.id][0] == "ext":
                 ext_roots.add(names[n.id][1][0])
             if local is not None and isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id not in local:
@@ -398,6 +471,7 @@ class Package:
                     if full[0] == "os" and full[-1] in OS_ATTR: caps.add(OS_ATTR[full[-1]])
                     if full[:2] == ["sys", "modules"]: pass
                 if n.attr in FILE_ATTRS: caps.add("file")
+                if n.attr in ESCAPE_ATTRS: flags.add("dyn-attr")
             if isinstance(n, (ast.Assign, ast.AugAssign)):
                 tgts = n.targets if isinstance(n, ast.Assign) else [n.target]
                 for t in tgts:
@@ -424,18 +498,46 @@ class Package:
                         ctx = dict(binds=self._bindings(root), cls=cls.split(".")[-1] if cls else None,
                                    first=fn.args.args[0].arg if fn is not None and fn.args.args and not static else None)
                     names_ = self._names(n.args[1], ctx) if len(n.args) >= 2 else None
+                    if names_ is not None and names_ & (ESCAPE_ATTRS | WRITE_ACCESS):
+                        names_ = None                         # escapes and write access stay TOP
                     if names_ is None:
-                        flags.add("dyn-attr")
-                    elif f.id == "getattr":                   # like x.<name>(): every method of each name it can be
+                        if not (f.id != "getattr" and self._slotted_self(n.args[0], ctx)):
+                            flags.add("dyn-attr")             # a slotted instance accepts only its slot names: a data write
+                    elif f.id == "getattr":                   # like x.<name>(): everything a hand-written x.<name>() would get
+                        rc = dotted(n.args[0])
                         for nm in sorted(names_):
                             targets = self.by_method.get(nm, []); stats["cha"] += len(targets)
                             edges.update(targets)
+                            if nm in NAME_FLAGS: flags.add(NAME_FLAGS[nm])
+                            if nm in OS_ATTR: caps.add(OS_ATTR[nm])          # the receiver may be os
+                            if nm in FILE_ATTRS or nm == "open": caps.add("file")
+                            if rc and rc[0] in names and names[rc[0]][0] == "ext":
+                                self._ext_effects(names[rc[0]][1] + rc[1:] + [nm], caps, flags, edges, value=True)
+                            elif rc and rc[0] in names and names[rc[0]][0] == "mod":
+                                m = names[rc[0]][1]
+                                if nm in self.top.get(m, {}): edges.update(self._sym_nodes(m, nm))
+                                else: flags.add("dyn-attr")   # may be a module the other module imported
+                            elif rc and rc[0] in ("builtins", "__builtins__"):
+                                flags.add("dyn-exec")
                     else:                                     # a write by a fixed name is like x.<name> = v
                         ch0 = dotted(n.args[0])
                         if ch0 and ch0[0] in names and names[ch0[0]][0] in ("mod", "ext"): flags.add("dyn-patch")
                     continue
                 if f.id == "__import__":
-                    self._dyn_import(first_const, edges, flags); continue
+                    self._dyn_import(first_const, edges, flags, caps); continue
+            if isinstance(f, ast.Attribute) and f.attr in ("__setattr__", "__delattr__", "__getattribute__", "__getattr__"):
+                if ctx is None:
+                    fn = root if isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef)) else None
+                    static = fn is not None and any(isinstance(d, ast.Name) and d.id == "staticmethod" for d in fn.decorator_list)
+                    ctx = dict(binds=self._bindings(root), cls=cls.split(".")[-1] if cls else None,
+                               first=fn.args.args[0].arg if fn is not None and fn.args.args and not static else None)
+                unbound = isinstance(f.value, ast.Name) and f.value.id in ("object", "type") or isinstance(f.value, ast.Name) and f.value.id in self.top.get(mod, {})
+                recv, arg = (n.args[0] if n.args else None, n.args[1] if len(n.args) > 1 else None) if unbound else (f.value, n.args[0] if n.args else None)
+                nm = self._names(arg, ctx) if arg is not None else None
+                if nm is None or nm & (ESCAPE_ATTRS | WRITE_ACCESS):
+                    write = f.attr in ("__setattr__", "__delattr__")
+                    if not (write and nm is None and recv is not None and self._slotted_self(recv, ctx)):
+                        flags.add("dyn-attr")
             if not ch:
                 if isinstance(f, ast.Attribute):          # receiver is an expression (super(), a call result, ...)
                     targets = self.by_method.get(f.attr, []); stats["cha"] += len(targets)
@@ -473,16 +575,46 @@ class Package:
                 stats["cha"] += len(targets)
             for t in targets: edges.add(t)
             if ext:
-                if ext[0] in MOD_CAPS: caps.add(MOD_CAPS[ext[0]])
-                if ext[0] == "os" and ext[-1] in OS_ATTR: caps.add(OS_ATTR[ext[-1]])
-                if ext[0] in DESER_MODS and ext[-1] in ("load", "loads", "open", "Unpickler"): flags.add("dyn-exec")
-                if ext[0] == "importlib" and ext[-1] in ("import_module", "__import__"): self._dyn_import(first_const, edges, flags)
-                if ext[:3] == ["importlib", "metadata", "entry_points"] or ext[-1] == "entry_points": flags.add("dyn-import")
+                self._ext_effects(ext, caps, flags, edges, call=n)
         return edges, caps, flags, ext_roots, stats, reads
 
-    def _dyn_import(self, literal, edges, flags):
+    def _ext_effects(self, ext, caps, flags, edges, value=False, call=None):
+        """Scope and flags of the external name `ext` (a dotted path), when called or, with value=True, used as a value."""
+        root, last = ext[0], ext[-1]
+        if root in MOD_CAPS: caps.add(MOD_CAPS[root])
+        if root == "os" and last in OS_ATTR: caps.add(OS_ATTR[last])
+        if root in DESER_MODS and (value or last in ("load", "loads", "open", "Unpickler")): flags.add("dyn-exec")
+        if root == "builtins" and len(ext) > 1:
+            if last == "open": caps.add("file")
+            elif last in NAME_FLAGS: flags.add(NAME_FLAGS[last])
+        if last in ESCAPE_ATTRS: flags.add("dyn-attr")
+        if ext[:2] == ["sys", "modules"]: flags.add("dyn-patch")
+        if ext[:3] == ["importlib", "metadata", "entry_points"] or last == "entry_points": flags.add("dyn-import")
+        if root == "importlib" and last in ("import_module", "__import__"):
+            lit = call.args[0].value if call is not None and call.args and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str) else None
+            self._dyn_import(lit, edges, flags, caps)
+        if root in ("operator", "inspect") and last in ("attrgetter", "methodcaller", "getattr_static"):
+            args = (call.args[1:2] if last == "getattr_static" else call.args[:1] if last == "methodcaller" else call.args) if call is not None else []
+            lits = [a.value for a in args if isinstance(a, ast.Constant) and isinstance(a.value, str)]
+            if call is None or not args or len(lits) != len(args):
+                flags.add("dyn-attr")                         # getattr by another name, with a computed name
+            else:                                             # literal names: the same checks as a literal getattr
+                for nm in {x for l in lits for x in l.split(".")}:
+                    if nm in ESCAPE_ATTRS or nm in WRITE_ACCESS: flags.add("dyn-attr")
+                    if nm in NAME_FLAGS: flags.add(NAME_FLAGS[nm])
+                    if nm in OS_ATTR: caps.add(OS_ATTR[nm])
+                    if nm in FILE_ATTRS or nm == "open": caps.add("file")
+                    edges.update(self.by_method.get(nm, []))
+        if value and len(ext) == 1 and root in MODULE_VALUE:   # the module itself, as a value
+            kind, v = MODULE_VALUE[root]
+            if kind == "caps": caps.update(v)
+            else: flags.add(v)
+        if value and len(ext) > 1 and last in NAME_FLAGS: flags.add(NAME_FLAGS[last])
+
+    def _dyn_import(self, literal, edges, flags, caps=None):
         if literal and literal in self.trees: edges.add(f"{literal}:<module>")
-        elif literal: pass
+        elif literal:                                         # an outside module, returned as a value
+            self._ext_effects(literal.split("."), caps if caps is not None else set(), flags, edges, value=True)
         else:
             flags.add("dyn-import")
             for m in self.trees: edges.add(f"{m}:<module>")      # over-approximate: could load any module
