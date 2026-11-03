@@ -267,6 +267,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <p>The 0x00 prefix is for leaf inputs. The 0x01 prefix is for interior inputs. This is the method of RFC 6962. Thus a leaf can never look like an interior node.</p>
 <p>A package with no nodes has the root <code>H("empty")</code>.</p>
 <p>The root commits to names and content. Names are the public interface. A new function name changes the root. New formatting does not change the root.</p>
+<p><strong>The rules have versions.</strong> The code root depends on the rules that build the graph: normalization, edges and pins. A new version of Algobank can change these rules. Then the same code can get a different code root. Thus a code root is defined by the version of Algobank that computed it. Each bank record names that version (<code>algobanked_by</code>). A check of a record runs that version. A pass never moves to new rules. The new version analyzes the code again, and a new record holds its result.</p>
 <p>Proven properties (section 10.4). These properties assume a collision-resistant hash:</p>
 <ul>
 <li><strong>Binding.</strong> Two packages have the same code root only if they have the same set of (node id, Merkle hash) pairs.</li>
@@ -512,7 +513,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <td><code class='top'>TOP</code>. Also an edge to each module in the package. Thus a change to any module invalidates the node.</td>
 </tr>
 <tr>
-<td><code>getattr</code>, <code>setattr</code>, <code>delattr</code> with a computed name. <code>globals()</code>, <code>locals()</code>, <code>vars()</code>.</td>
+<td><code>getattr</code>, <code>setattr</code>, <code>delattr</code> with a computed name, unless the name comes from a fixed list (below). <code>globals()</code>, <code>locals()</code>, <code>vars()</code>.</td>
 <td><code>dyn-attr</code></td>
 <td><code class='top'>TOP</code></td>
 </tr>
@@ -530,6 +531,22 @@ document.addEventListener("DOMContentLoaded", () => {
 </table>
 <p>Algobank resolves an import of a package module with a literal name as a normal import.</p>
 <p><code class='top'>TOP</code> goes to each caller. A <code class='top'>TOP</code> node cannot get a result such as "uses no network". It can get only results that are true for all of its possible behaviors.</p>
+<p><strong>Names from fixed lists.</strong> Algobank resolves <code>getattr(x, name)</code> when the code fixes every value of <code>name</code>:</p>
+<ul>
+<li>a string literal;</li>
+<li>a loop or comprehension over a literal tuple, list or set of strings, or over a slice of one;</li>
+<li>one element of such a list, such as <code>keys[i]</code>;</li>
+<li>a loop over a list that the package fixes on its classes: <code>__slots__</code>, the fields of a dataclass, or a class-level tuple of strings.</li>
+</ul>
+<p>The name must have no other binding in the function. A local list must not change in place. Then <code>getattr(x, name)</code> is like the call <code>x.name()</code> for each possible name: it gets an edge to each method with that name. A <code>setattr</code> or <code>delattr</code> by such a name is like a plain write.</p>
+<p>A class-level list counts only if no code in the package can change it:</p>
+<ul>
+<li>no other write goes to an attribute with that name;</li>
+<li>no write with a computed name goes through a class of the same family (a base or a subclass);</li>
+<li>no write with a computed name goes through an instance of such a class, unless each class in the family uses <code>__slots__</code>. An instance without a <code>__dict__</code> cannot hide a class attribute;</li>
+<li>no write with a computed name goes through any other object.</li>
+</ul>
+<p>Assumption: classes outside the package do not subclass classes of the package.</p>
 <h3>4.5 Compute and effect parts [spec]</h3>
 <p>Reviewers must examine the small parts that touch files, the network or processes. Pure compute parts need less review. Thus Algobank separates computation from effects.</p>
 <ol>
@@ -912,7 +929,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </tr>
 <tr>
 <td><code>v0.1/test_pkgmerkle.py</code></td>
-<td>Regression tests. They cover full digests and prefixes. They cover module-level dependencies: constants, imported constants, class attributes, <code>global</code> writers, references, registries, conditional imports and star imports. They cover precision: unrelated changes do not spread. They cover method calls: subclass overrides, <code>super()</code>, call results, and receivers that must never be narrowed. There is one test for each checker condition.</td>
+<td>Regression tests. They cover full digests and prefixes. They cover names from fixed lists, with escape tests. They cover implicit calls (section 10.3). They cover module-level dependencies: constants, imported constants, class attributes, <code>global</code> writers, references, registries, conditional imports and star imports. They cover precision: unrelated changes do not spread. They cover method calls: subclass overrides, <code>super()</code>, call results, and receivers that must never be narrowed. There is one test for each checker condition.</td>
 </tr>
 <tr>
 <td><code>pyproject.toml</code></td>
@@ -974,7 +991,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <tbody>
 <tr>
 <td>Code root</td>
-<td><code>ef9e84687a74c28fd06aa5867b3e4a447f9bbdea68087a8b1ceb649ec1c503ab</code></td>
+<td><code>ff6bf50fdfcfa74914c3eaa4b2133a4f667c437bdd2e28848b1131c48f69abca</code></td>
 </tr>
 <tr>
 <td>Scope</td>
@@ -986,11 +1003,11 @@ document.addEventListener("DOMContentLoaded", () => {
 </tr>
 <tr>
 <td>Nodes</td>
-<td>50</td>
+<td>54</td>
 </tr>
 <tr>
 <td>File SHA-256</td>
-<td><code>601182eaf3303372010e79c2fcd7c47015544ab43588a41976e96f24f53a8916</code></td>
+<td><code>21d8916046a3c3bac50449eb74522ed7668cb1b2128c3b89a73225c80bbe8adb</code></td>
 </tr>
 <tr>
 <td>Python</td>
@@ -1075,13 +1092,22 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))&quot;
 </tbody>
 </table>
 <p>The dexweb numbers come from one small package with one author. Do not make general conclusions from them.</p>
+<p><strong>Names from fixed lists</strong> (<code>test_pkgmerkle.py</code>). Measured on the nine dependencies in the bank, before and after the rule:</p>
+<ul>
+<li>nodes with dynamic code: 33 before, 27 after;</li>
+<li>nodes that reach <code class='top'>TOP</code>: 657 before, 591 after;</li>
+<li>soupsieve: 62 nodes reach <code class='top'>TOP</code> before, 0 after;</li>
+<li>nodes that get a new concrete scope: 0.</li>
+</ul>
+<p>The resolved nodes are <code>Tag.copy_self</code> (beautifulsoup4), <code>Color.as_operator</code> (pypdf), and <code>_SelectorContext.debug</code>, <code>Immutable.__eq__</code>, <code>Immutable.__repr__</code> and <code>_pickle</code> (soupsieve). The other nodes take names from data, forward attributes, or run in a class family with computed writes. They keep <code class='top'>TOP</code>. Escape tests keep <code class='top'>TOP</code> for a rebound name, a list changed in place, a computed collection, a list written elsewhere, and computed writes through a class, an instance with a <code>__dict__</code> or another object.</p>
+<p><strong>Implicit calls</strong> (<code>test_pkgmerkle.py</code>). Python runs some code that no call in the source names. 38 cases test this. Each case links a function to a socket only through one such mechanism. 4 cases are linked: the explicit method call that checks the test itself, a constructor that runs <code>__init__</code>, <code>raise E()</code>, and a default argument. 34 cases are not linked yet: operators, protocols such as <code>for</code>, <code>with</code> and <code>len</code>, properties and descriptors, <code>__getattr__</code> and <code>__setattr__</code>, <code>__new__</code> and metaclasses, class creation, decorators, functions passed as values, and imports inside functions. In each case the scope of the package is correct, because the target node has the scope. The scope of the calling node is too small, and its Merkle hash does not follow the target. The test lists these 34 cases by name. It fails when one of them changes.</p>
 <p><strong>Self-analysis.</strong> Algobank analyzed <code>pkgmerkle.py</code> alone:</p>
 <ul>
-<li>It has 50 nodes.</li>
+<li>It has 54 nodes.</li>
 <li>It has no scope.</li>
 <li>It has no <code class='top'>TOP</code>.</li>
 <li>Repeated runs give the same hashes.</li>
-<li>A one-line change to <code>H()</code> changes <code>H</code>. It also changes the 8 nodes that call <code>H</code> directly or indirectly. The other 41 nodes keep their hashes.</li>
+<li>A one-line change to <code>H()</code> changes <code>H</code>. It also changes the 8 nodes that call <code>H</code> directly or indirectly. The other 45 nodes keep their hashes.</li>
 </ul>
 <h3>10.4 Proof of the code root</h3>
 <p><code>v0.1/proofs/CodeRoot.v</code> models <code>Package.leaves()</code> and <code>Package.root()</code> in Coq 8.18. It proves these theorems:</p>
@@ -1436,7 +1462,7 @@ python3.14 -I v0.1/proofs/check_model.py
 </tbody>
 </table>
 <p>Each website is a dex. dexweb builds it. <code>python run.py</code> in <code>site/</code> writes the website to <code>site/gen/</code>. dexweb publishes it to <code>web</code>.</p>
-<p><strong>The index is the bank.</strong> Its title is "algobank Algorithm Bank". At each build, <code>run.py</code> renders <code>bank.jsonl</code> from <code>live</code> into the index template in <code>site/config.json</code>. It also checks the bank. It downloads each banked file with pip. It checks the SHA-256 of each file against its record. It runs Algobank on each file and checks the code root against the record. A record without a file is computed from the source commit that it names. Any difference stops the build. The index has these items:</p>
+<p><strong>The index is the bank.</strong> Its title is "algobank Algorithm Bank". At each build, <code>run.py</code> renders <code>bank.jsonl</code> from <code>live</code> into the index template in <code>site/config.json</code>. It also checks the bank. It downloads each banked file with pip. It checks the SHA-256 of each file against its record. It runs, for each record, the version of Algobank that the record names (<code>algobanked_by</code>), in its own Python process. That version is itself in the bank: its PyPI file or its source commit. It checks the code root against the record. A record without a file is computed from the source commit that it names. Any difference stops the build. The index has these items:</p>
 <ul>
 <li>Five lines that say what Algobank is. They are plain text in the page, for people and for agents. One line shows at a time, for 4 seconds. A pointer on the line stops the motion. With reduced motion set, all five lines show and nothing moves.</li>
 <li>A search bar. It takes <code>package</code> or <code>package v1.2.3</code>. A link can carry <code>?q=</code>.</li>
