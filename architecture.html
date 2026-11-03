@@ -582,7 +582,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <ol>
 <li><strong>Two types of part.</strong></li>
 <li>A compute part declares no scope. It has no effectful imports. It has no <code class='top'>TOP</code>. It has no introspection. It has no clock. It has no randomness.</li>
-<li>An effect part declares narrow scopes with parameters. Examples: <code>file: read ./data</code> and <code>network: api.example.com:443</code>. Effect parts must be small.</li>
+<li>An effect part declares narrow scopes with parameters. Examples: <code>file: read ./data</code> and <code>network: api.example.com:443</code>. Effect parts must be small. An effect lives in a plain function with a unique name: not in a special method or a property, and not under a name that other functions share. Then calls matched by name cannot carry it to unrelated code. Two findings report breaks of this rule (section 10.6).</li>
 <li><strong>Effects come in as arguments.</strong> Compute code gets data from its caller. It also gets readers, clients, the current time and random generators from its caller. It never gets them itself. Thus authority is visible at the point where parts connect. This pattern is "functional core, imperative shell".</li>
 <li><strong>Manifest.</strong> Each package declares the scope of each module in a manifest, for example <code>algobank.toml</code>. Admission rejects each module whose detected scope is larger than its declared scope. Admission reports declared scope that is never used.</li>
 <li><strong>Allowlist for compute parts.</strong> A compute part can import only from a list of pure standard-library modules. It cannot use dunder introspection. It cannot use frame access. An allowlist fails safe. A denylist of dangerous names always misses something.</li>
@@ -1301,6 +1301,14 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 <td>medium</td>
 </tr>
 <tr>
+<td>An effect in a special method: a special method other than <code>__init__</code>, or a property or descriptor, whose own code uses <code>file</code>, <code>network</code>, <code>process</code>, <code>env</code> or <code>native</code>. Python runs it without a visible call.</td>
+<td>medium. In <code>diff</code>, new cases only.</td>
+</tr>
+<tr>
+<td>An effect under a shared name: a function whose own code uses such a scope, and whose name other functions also have. Calls matched by name reach it from unrelated code. Special-method names are not counted: <code>K()</code> finds <code>__init__</code> by class.</td>
+<td>medium. In <code>diff</code>, new cases only. In a closure, names count across all its packages.</td>
+</tr>
+<tr>
 <td>A changed dependency range. New or changed data files.</td>
 <td>low</td>
 </tr>
@@ -1354,7 +1362,7 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 <li>Sometimes a version cannot be compared with a range. Then the advisory can apply. Thus Algobank reports it.</li>
 <li>Algobank checks each file in the archive against the published malicious-file digests. Thus Algobank also catches a repackaged copy.</li>
 <li>Some advisories have two identifiers: a <code>MAL-</code> record and its <code>PYSEC-</code> alias. Algobank ships such an advisory once.</li>
-<li><strong>Algobank keeps catches. It never stores passes</strong> (principle 9). Records are only added. They are never removed. Algobank ships no report or verdict about any package. Algobank analyzes each file each time it checks the file.</li>
+<li><strong>Algobank keeps catches. It never stores passes</strong> (principle 9). Records are only added. They are never removed. A refresh keeps every earlier record, also when its package is no longer one of the 1,000 most downloaded. A record that is still published replaces its older copy. Algobank ships no report or verdict about any package. Algobank analyzes each file each time it checks the file.</li>
 <li><strong>Each result tells the age of the data.</strong> It gives the date of the data. It gives the sources. A report after that date is missing until Algobank is updated. Thus the release cadence of Algobank is the update cadence of the known data.</li>
 </ol>
 <p><strong>Validation.</strong></p>
