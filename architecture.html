@@ -255,6 +255,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <li>A module value depends on what its statements read, call or import. Example: <code>from .config import LIMIT</code> makes the local value depend on <code>config:=LIMIT</code>.</li>
 <li>A function can write a name through <code>global</code>. This function is a dependency of the value of that name. Thus each reader depends on the writer.</li>
 <li>Each function in a module depends on the <code>&lt;effects&gt;</code> node of the module, if the module has one.</li>
+<li>A node depends on the code that Python runs for it without a visible call: special methods, properties, decorators, and functions that it passes on as values (section 4.3).</li>
 </ul>
 <p>Thus a change to one module-level name changes only the code that reads that name.</p>
 <p>Recursion makes cycles. Mutual recursion also makes cycles. Thus Algobank computes the hash for each component. Algobank hashes each component as one unit. Each member then adds its own hash to that value.</p>
@@ -495,6 +496,23 @@ document.addEventListener("DOMContentLoaded", () => {
 <li>for the top-level code of a module: the modules that it imports;</li>
 <li>for the top-level code of a module: the functions that it calls at import time.</li>
 </ul>
+<p><strong>Implicit calls.</strong> Python runs much code that no call in the source names. Each such call is an edge, for hashing and for roll-up. Algobank does not know the type of an object. Thus it links each construct to every method of the package with the matching name, as it does for <code>obj.method()</code>:</p>
+<ul>
+<li>operators: <code>a + b</code> links <code>__add__</code> and <code>__radd__</code>; <code>x += y</code> also links <code>__iadd__</code>; comparisons link both directions; unary operators link <code>__neg__</code>, <code>__pos__</code> and <code>__invert__</code>;</li>
+<li>items: <code>a[k]</code> links <code>__getitem__</code>, <code>__setitem__</code> or <code>__delitem__</code>, <code>__missing__</code> and <code>__class_getitem__</code>;</li>
+<li>iteration: <code>for</code>, comprehensions, unpacking, <code>*args</code> and <code>yield from</code> link <code>__iter__</code>, <code>__next__</code>, <code>__getitem__</code> and <code>__len__</code>; <code>x in a</code> also links <code>__contains__</code>;</li>
+<li><code>with</code> links <code>__enter__</code> and <code>__exit__</code>; <code>await</code> and the <code>async</code> forms link their methods;</li>
+<li>truth tests (<code>if</code>, <code>while</code>, <code>and</code>, <code>or</code>, <code>not</code>, <code>assert</code>) link <code>__bool__</code> and <code>__len__</code>; f-strings and <code>%</code> link <code>__format__</code>, <code>__str__</code> and <code>__repr__</code>; dict and set keys link <code>__hash__</code> and <code>__eq__</code>; <code>del</code> links <code>__del__</code>;</li>
+<li>builtins link their methods: <code>len</code> links <code>__len__</code>, <code>str</code> links <code>__str__</code> and <code>__repr__</code>, <code>sorted</code> links iteration and comparison;</li>
+<li>an object handed to outside or builtin code may have any protocol method called on it;</li>
+<li>a call on a value or on an attribute may run an instance's <code>__call__</code>;</li>
+<li>attributes: a read or write of <code>.p</code> links each method or property named <code>p</code>, and <code>__getattr__</code>, <code>__getattribute__</code>, <code>__setattr__</code>, <code>__delattr__</code> and descriptor methods;</li>
+<li><code>K()</code> links <code>__new__</code>, <code>__init__</code> and <code>__del__</code> of <code>K</code> and its bases, and the <code>__call__</code> of each metaclass; a <code>class</code> statement links <code>__init_subclass__</code>, <code>__set_name__</code> and the metaclass methods;</li>
+<li>a decorator is a call: at the definition, and from each call of the decorated function;</li>
+<li>a function or class used as a value may be called; a function stored on a class or an object is a method of that name;</li>
+<li>an <code>import</code> inside a function links the imported module.</li>
+</ul>
+<p>Two narrowings follow Python exactly. Special methods are looked up on the class of an object, so module functions with special names are never linked, except a module's own <code>__getattr__</code> for an attribute of that module. <code>self.x</code> in class <code>K</code> links only the attribute methods of the classes that can serve <code>self</code>: the subclasses of <code>K</code> and all their bases.</p>
 <p>Roll-up follows these call edges only. A function can read the constants of a module. For hashing, the function then depends on that module (section 3.3). But the function does not run the import-time code of that module. Thus it does not get the scope of that code.</p>
 <p>The scope of a package is the union of the scopes of its nodes. The scope root is the hash of that set. A new scope anywhere changes the scope root. This shows where a new power came in.</p>
 <h3>4.4 <code class='top'>TOP</code> [built]</h3>
@@ -1002,7 +1020,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <tbody>
 <tr>
 <td>Code root</td>
-<td><code>5431f71c4f14366f6961accceed5295799401a0d5729b0226a240995d4ec41bc</code></td>
+<td><code>8d97cdd1bbe821851cbdd6c9d1f676091518d55a228ce77f78b779dc77bbe73b</code></td>
 </tr>
 <tr>
 <td>Scope</td>
@@ -1014,11 +1032,11 @@ document.addEventListener("DOMContentLoaded", () => {
 </tr>
 <tr>
 <td>Nodes</td>
-<td>61</td>
+<td>74</td>
 </tr>
 <tr>
 <td>File SHA-256</td>
-<td><code>eaba3e789f22e095fd23ec84a5d8593d92319a9151fb00594a7078d34517b560</code></td>
+<td><code>b987724e477efb4ee270deaf8bdd1e39dd34219cc3c52b0a6fd57e33c1a578fd</code></td>
 </tr>
 <tr>
 <td>Python</td>
@@ -1112,14 +1130,15 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))&quot;
 </ul>
 <p>Resolved: <code>Tag.copy_self</code> (beautifulsoup4), and <code>_SelectorContext.debug</code>, <code>Immutable.__eq__</code>, <code>Immutable.__repr__</code> and <code>_pickle</code> (soupsieve). pypdf's <code>Color.as_operator</code> reads a class tuple, but pypdf has other dynamic code, so it keeps <code class='top'>TOP</code>. The new detections found 7 nodes that algobank 1.0.2 missed: frames and <code>inspect.stack</code> in beautifulsoup4, importlib_resources and typing_extensions, <code>__subclasses__</code> in cobble, and a <code>__getattribute__</code> that reads by a computed name in pypdf.</p>
 <p><strong>Attacks</strong> (<code>test_pkgmerkle.py</code>). 34 attacks try to hide a power behind a name. They include a fixed list over <code>os</code>, a module or function passed as a value, a literal import of <code>subprocess</code>, <code>builtins.exec</code>, <code>getattr</code> under another name, escape names, <code>sys.modules</code> through <code>getattr</code>, list aliases, and nine ways to rewrite a class list at run time. Each one shows the power or <code class='top'>TOP</code>. With the second analysis removed, the <code>exec</code> attack gets through. With lists allowed at class level, the list attack gets through. Thus the tests check the defenses.</p>
-<p><strong>Implicit calls</strong> (<code>test_pkgmerkle.py</code>). Python runs some code that no call in the source names. 38 cases test this. Each case links a function to a socket only through one such mechanism. 4 cases are linked: the explicit method call that checks the test itself, a constructor that runs <code>__init__</code>, <code>raise E()</code>, and a default argument. 34 cases are not linked yet: operators, protocols such as <code>for</code>, <code>with</code> and <code>len</code>, properties and descriptors, <code>__getattr__</code> and <code>__setattr__</code>, <code>__new__</code> and metaclasses, class creation, decorators, functions passed as values, and imports inside functions. In each case the scope of the package is correct, because the target node has the scope. The scope of the calling node is too small, and its Merkle hash does not follow the target. The test lists these 34 cases by name. It fails when one of them changes.</p>
+<p><strong>Implicit calls</strong> (<code>test_pkgmerkle.py</code>). 38 cases each link a function to a socket only through one mechanism: operators, protocols such as <code>for</code>, <code>with</code> and <code>len</code>, properties and descriptors, <code>__getattr__</code> and <code>__setattr__</code>, <code>__new__</code> and metaclasses, class creation, decorators, functions passed as values, and imports inside functions. In each case the function gets the socket's scope, and a change to the socket's code changes the function's Merkle hash.</p>
+<p><strong>The price of implicit calls.</strong> Measured on the nine dependencies in the bank, against algobank 1.0.2. Nodes that reach <code class='top'>TOP</code> go from 657 to 1,606. Most of the rise has two causes. Real reflection is now flagged: frame inspection in beautifulsoup4 and typing_extensions. And <code>__getattr__</code> methods that forward every missing attribute (pypdf's <code>IndirectObject</code>, importlib_resources' <code>SpecLoaderAdapter</code>) can answer an attribute read on any object, because Algobank does not know types. In mammoth, 245 nodes gain <code>file</code>, mostly through the rule that a call on an attribute may run <code>ImageWriter.__call__</code>, a special method that writes files. dexweb, soupsieve and Algobank itself do not change.</p>
 <p><strong>Self-analysis.</strong> Algobank analyzed <code>pkgmerkle.py</code> alone:</p>
 <ul>
-<li>It has 61 nodes.</li>
+<li>It has 74 nodes.</li>
 <li>It has no scope.</li>
 <li>It has no <code class='top'>TOP</code>.</li>
 <li>Repeated runs give the same hashes.</li>
-<li>A one-line change to <code>H()</code> changes <code>H</code>. It also changes the 8 nodes that call <code>H</code> directly or indirectly. The other 52 nodes keep their hashes.</li>
+<li>A one-line change to <code>H()</code> changes <code>H</code>. It also changes the 8 nodes that call <code>H</code> directly or indirectly. The other 65 nodes keep their hashes.</li>
 </ul>
 <h3>10.4 Proof of the code root</h3>
 <p><code>v0.1/proofs/CodeRoot.v</code> models <code>Package.leaves()</code> and <code>Package.root()</code> in Coq 8.18. It proves these theorems:</p>
