@@ -13,8 +13,9 @@ Nothing from the package is installed, imported or run.
 Every result is checked against the advisories shipped in this package (algobank/known.json):
 malicious releases, releases with known vulnerabilities, and known malicious files.
 
-Native binaries (.so, .pyd, .dylib, .dll) are not checked: each is a high finding, "native binary
-detected. not checked", to be checked separately. With --ignore-native they are still reported, marked
+Native binaries (.so, .pyd, .dylib, .dll, and any file whose first bytes are machine code) and compiled
+Python (.pyc) are not checked: each is a high finding, "native binary detected. not checked", to be checked
+separately. So is every Python file Algobank cannot decode or parse. With --ignore-native they are still reported, marked
 ignored, and do not affect the exit status, so a package with native code can still be algobanked.
 
 Every package a package calls (its Requires-Dist dependencies) should be algobanked too. Give scope all
@@ -23,7 +24,7 @@ them gets a warning. A warning never changes the exit status.
 
 Exit status: 0 no high-severity findings, 1 high-severity findings, 2 error.
 """
-import argparse, ast, hashlib, io, json, os, re, sys, tarfile, zipfile
+import argparse, ast, hashlib, io, json, os, re, sys, tarfile, tokenize, unicodedata, zipfile
 
 from .pkgmerkle import Package, TOP, modname_of
 
@@ -34,6 +35,19 @@ SDIST_TEXT = ("source distribution: installing it runs its build backend and any
               "here (TOP); pip runs that code to read the metadata even during pip download, so download "
               "with --only-binary :all:")
 NATIVE_EXT = (".so", ".pyd", ".dylib", ".dll")
+NATIVE_RE = re.compile(r"\.(so|pyd|dylib|dll)(\.[0-9]+)*$", re.I)   # libx.so.1 too
+# machine code by its first bytes, whatever the file is called: ELF, Windows PE, Mach-O, WebAssembly
+NATIVE_MAGIC = (b"\x7fELF", b"MZ", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe",
+                b"\xca\xfe\xba\xbe", b"\x00asm")
+SOURCE_EXT = (".py", ".pyw")                                   # Python imports both
+COMPILED_EXT = (".pyc", ".pyo")
+# entry point groups that tools load by themselves: installing the package is enough for its code to run
+AUTO_ENTRY_POINTS = {"pytest11", "distutils.commands", "distutils.setup_keywords", "egg_info.writers", "setuptools.file_finders",
+                     "setuptools.finalize_distribution_options", "flake8.extension", "flake8.report", "jupyter_server.extension",
+                     "sphinx.builders", "pylint.plugins", "coverage.plugins", "mypy.plugins", "nose.plugins.0.10"}
+COMPILED_TEXT = "compiled Python detected (.pyc): Python can run it in place of the source. not checked"
+# characters that change how code looks without changing what it does (Trojan Source, CVE-2021-42574)
+HIDDEN_CHARS = re.compile("[\u202a-\u202e\u2066-\u2069\u200b-\u200f\u2028\u2029\u00ad\u2060-\u2064\ufeff]")
 NATIVE_TEXT = "native binary detected. not checked"
 DYN_FLAGS = {"dyn-import", "dyn-attr", "dyn-exec", "dyn-patch", "dyn-getattr-def", "star-import"}
 FLAG_TEXT = {"dyn-import": "import with a computed name", "dyn-attr": "attribute access with a computed name",
@@ -110,8 +124,9 @@ def vkey(v):
 
 def affects(a, version):
     """Whether an advisory's `affected` block covers this version: True, False, or None if it cannot tell."""
-    if version in a.get("versions", []):
-        return True
+    k0 = vkey(version)
+    if version in a.get("versions", []) or (k0 and any(vkey(v) == k0 for v in a.get("versions", []))):
+        return True                                           # 1.0 and 1.0.0 are one version (PEP 440)
     rngs = [r for r in a.get("ranges", []) if r.get("type") == "ECOSYSTEM"]
     if not rngs:
         return not a.get("versions")                           # no versions and no ranges: every version
@@ -160,37 +175,62 @@ def with_known(r, *arts):
     """Add known-bad findings to a report. Kept apart from the report itself, which is pure analysis."""
     labels = ("old: ", "new: ") if len(arts) == 2 else ("",)
     for a, which in zip(arts, labels):
-        r["findings"] = known_findings(a["release"], a["art"].sha256, a["digests"], which) + r["findings"]
+        found = known_findings(a["release"], a["art"].sha256, a["digests"], which)
+        if a.get("named") and a["named"] != a["release"]:      # match the name in the file name too
+            texts = {x["text"] for x in found}
+            found += [x for x in known_findings(a["named"], a["art"].sha256, {}, which) if x["text"] not in texts]
+        r["findings"] = found + r["findings"]
     r["coverage"] = r["coverage"] + [known_note()]
     return r
 
 def read_members(art):
-    """{path: bytes} for regular files, plus notes about anything skipped. Nothing is extracted to disk."""
+    """{path: bytes} for regular files, plus notes about anything skipped. Nothing is extracted to disk.
+    A skipped file, a name stored twice and a path outside the package are listed in art.issues."""
     out, notes, total = {}, [], 0
+    issues = art.issues = []
+    def add(name, data):
+        if name in out:
+            issues.append(("high", "duplicate", f"{name} is stored twice in the archive: the copy analyzed may not be the copy installed"))
+        out[name] = data
     buf = io.BytesIO(art.data)
     if art.filename.endswith((".whl", ".zip")):
         with zipfile.ZipFile(buf) as z:
             for i in z.infolist():
                 if i.is_dir(): continue
                 if i.file_size > MAX_FILE or total + i.file_size > MAX_TOTAL:
-                    notes.append(f"skipped large file {i.filename}"); continue
+                    issues.append(("high", "not read", f"{i.filename} is too large to read ({i.file_size} bytes): not analyzed (TOP)")); continue
                 total += i.file_size
-                out[i.filename] = z.read(i)
+                add(i.filename, z.read(i))
     elif art.filename.endswith((".tar.gz", ".tgz", ".tar")):
         with tarfile.open(fileobj=buf) as t:
             for m in t.getmembers():
                 if not m.isfile(): continue
                 if m.size > MAX_FILE or total + m.size > MAX_TOTAL:
-                    notes.append(f"skipped large file {m.name}"); continue
+                    issues.append(("high", "not read", f"{m.name} is too large to read ({m.size} bytes): not analyzed (TOP)")); continue
                 total += m.size
                 name = m.name.split("/", 1)[1] if "/" in m.name else m.name   # drop "name-version/"
-                out[name] = t.extractfile(m).read()
+                add(name, t.extractfile(m).read())
     else:
         raise SystemExit(f"error: unsupported file type {art.filename}")
+    folded = {}
+    for name in out:
+        parts = name.replace("\\", "/").split("/")
+        if name.startswith(("/", "\\")) or ".." in parts or re.match(r"^[A-Za-z]:", name) or "\\" in name:
+            issues.append(("high", "path", f"{name} points outside the package or uses a backslash: an installer may write it elsewhere"))
+        key = unicodedata.normalize("NFC", name).casefold()       # Mod.py and mod.py are one file on many systems
+        if key in folded and folded[key] != name:
+            issues.append(("high", "duplicate", f"{folded[key]} and {name} differ only in case or Unicode form: which one is used depends on the system"))
+        folded.setdefault(key, name)
     return out, notes
 
+def metadata(members):
+    """The package's own metadata: METADATA in a .dist-info folder at the top of a wheel, or PKG-INFO at the top of
+    an sdist. A vendored copy deeper in the archive (flit_core ships tomli's) is not the package's."""
+    found = sorted(k for k in members if re.fullmatch(r"[^/]+\.dist-info/METADATA|PKG-INFO", k))
+    return members[found[0]] if found else b"", found
+
 def requires(members):
-    meta = next((v for k, v in members.items() if k.endswith((".dist-info/METADATA", "PKG-INFO"))), b"")
+    meta = metadata(members)[0]
     deps = {}
     for m in re.finditer(r"^Requires-Dist:[ \t]*([A-Za-z0-9_.\-]+)[ \t]*(.*)$", meta.decode("utf-8", "replace"), re.M):
         spec = m.group(2).strip()
@@ -201,7 +241,7 @@ def requires(members):
     return deps
 
 def release(members):
-    meta = next((v for k, v in members.items() if k.endswith((".dist-info/METADATA", "PKG-INFO"))), b"")
+    meta = metadata(members)[0]
     text = meta.decode("utf-8", "replace")
     name, version = re.search(r"^Name:[ \t]*(\S+)", text, re.M), re.search(r"^Version:[ \t]*(\S+)", text, re.M)
     return (norm(name.group(1)), version.group(1)) if name and version else None
@@ -218,10 +258,17 @@ def hooks(members):
             found[path] = "runs on every Python start"
         elif re.match(r"[^/]+\.data/scripts/", path):
             found[path] = "script installed on PATH"
+        elif re.match(r"[^/]+\.data/(data|headers)/", path):  # installed under the Python prefix, outside the package
+            if base.endswith(".pth") or base in ("sitecustomize.py", "usercustomize.py"):
+                found[path] = "installed outside the package; runs on every Python start"
+            elif re.search(r"/(site|dist)-packages/|/bin/|/Scripts/", path):
+                found[path] = "installed outside the package, into site-packages or a bin folder: it can replace other code"
+            else:
+                found[path] = "installed outside the package, under the Python prefix"
     return found
 
 def entry_points(members):
-    ep = next((v for k, v in members.items() if k.endswith(".dist-info/entry_points.txt")), b"")
+    ep = b"\n".join(v for k, v in sorted(members.items()) if re.fullmatch(r"[^/]+\.dist-info/entry_points\.txt", k))   # the package's own
     lines = [l.strip() for l in ep.decode("utf-8", "replace").splitlines()]
     out, section = set(), ""
     for l in lines:
@@ -229,29 +276,75 @@ def entry_points(members):
         elif l and not l.startswith("#"): out.add(f"{section} {l}")
     return out
 
+def decode_source(data):
+    """The text Python reads from these bytes: the encoding comes from the BOM or the coding line (PEP 263)."""
+    enc, _ = tokenize.detect_encoding(io.BytesIO(data).readline)
+    return data.decode(enc), enc
+
 def analyze(art):
     members, notes = read_members(art)
     is_wheel = art.filename.endswith(".whl")
-    sources, unparsed = {}, []
+    sources, unparsed, encodings, hidden = {}, [], {}, []
     for path, data in members.items():
-        if path.endswith(".py") and ".dist-info/" not in path:
+        if path.endswith(SOURCE_EXT):
             try:
-                src = data.decode("utf-8")
+                src, enc = decode_source(data)
                 ast.parse(src, path)                                       # parse only, never run
                 sources[path] = src
-            except (UnicodeDecodeError, SyntaxError, ValueError):
+                if enc not in ("utf-8", "utf-8-sig"): encodings[path] = enc
+                if HIDDEN_CHARS.search(src.lstrip("\ufeff")): hidden.append(path)
+            except (UnicodeDecodeError, SyntaxError, ValueError, LookupError, RecursionError, MemoryError):
                 unparsed.append(path)
     deps = requires(members)
     pins = dict(deps)
     if "beautifulsoup4" in pins: pins["bs4"] = pins["beautifulsoup4"]
     pkg = Package(sources, pins)
     digests = {p: hashlib.sha256(d).hexdigest() for p, d in members.items()}
-    natives = {p: d for p, d in digests.items() if p.endswith(NATIVE_EXT)}
+    natives = {p: d for p, d in digests.items()
+               if NATIVE_RE.search(p) or (not p.endswith(SOURCE_EXT) and members[p][:4].startswith(NATIVE_MAGIC))}
+    compiled = {p: d for p, d in digests.items() if p.endswith(COMPILED_EXT)}
     other = {p: d for p, d in digests.items()
-             if not p.endswith(".py") and p not in natives and ".dist-info/" not in p}
+             if not p.endswith(SOURCE_EXT) and p not in natives and p not in compiled and ".dist-info/" not in p}
     return dict(art=art, pkg=pkg, deps=deps, hooks=hooks(members), entry_points=entry_points(members),
                 natives=natives, other=other, unparsed=unparsed, notes=notes, is_wheel=is_wheel,
-                digests=digests, release=release(members), sources=sources)
+                digests=digests, release=release(members), sources=sources, compiled=compiled, issues=art.issues,
+                encodings=encodings, hidden=hidden, named=name_in_filename(art.filename), metadata_files=metadata(members)[1])
+
+def name_in_filename(fn):
+    """(name, version) from a wheel or sdist file name."""
+    m = re.match(r"^([^-]+)-([^-]+)(?:-[^-]+)?-[^-]+-[^-]+-[^-]+\.whl$", fn) or re.match(r"^(.+)-([^-]+)\.(?:tar\.gz|tgz|tar|zip)$", fn)
+    return (norm(m.group(1)), m.group(2)) if m else None
+
+def reading_findings(a):
+    """What the archive itself shows: code Algobank could not read or check, and names that disagree."""
+    f = [finding(sev, kind, text) for sev, kind, text in a["issues"]]
+    if a["unparsed"]:
+        f.append(finding("high", "not analyzed", "Python files that cannot be decoded or parsed: not analyzed (TOP)", a["unparsed"]))
+    if a["compiled"]:
+        f.append(finding("high", "compiled", COMPILED_TEXT, list(a["compiled"])))
+    for path, enc in sorted(a["encodings"].items()):
+        f.append(finding("medium", "encoding", f"{path} declares the source encoding {enc}: a known way to hide code from readers"))
+    if a["hidden"]:
+        f.append(finding("medium", "hidden characters", "invisible or direction-changing characters in source code: the code may not do what it looks like", a["hidden"]))
+    if len(a["metadata_files"]) > 1:
+        f.append(finding("high", "metadata", "more than one top-level metadata file: which name and version apply is unclear", a["metadata_files"]))
+    for e in sorted(a["entry_points"]):                       # "[group] name = target"
+        g = re.match(r"^\[([^\]]+)\]", e)
+        if g and g.group(1).strip() in AUTO_ENTRY_POINTS:
+            f.append(finding("high", "entry point", f"entry point {e}: a tool loads it by itself, so installing the package runs its code"))
+    tops = {p.split("/", 1)[0].removesuffix(".py").removesuffix(".pyw") for p in a["sources"]
+            if "/" not in p.split(".data/", 1)[-1] or p.count("/") >= 1 and not p.split("/", 1)[0].endswith((".dist-info", ".data"))}
+    shadow = sorted(t for t in tops if t in sys.stdlib_module_names and t not in ("test", "tests"))
+    if shadow:
+        f.append(finding("high", "shadowing", "the package ships modules named like standard library modules: every program that "
+                                              "imports them may run this code instead", shadow))
+    rel, named = a["release"], a["named"]
+    if rel is None:
+        f.append(finding("high", "metadata", "no package metadata (METADATA or PKG-INFO): name and version are unknown"))
+    elif named and (rel[0] != named[0] or vkey(rel[1]) != vkey(named[1])):
+        f.append(finding("high", "metadata", f"the file name says {named[0]} {named[1]}, the metadata says {rel[0]} {rel[1]}: "
+                                             "an installer may use either"))
+    return f
 
 def closure_report(arts):
     """Every wheel's code in one graph: calls into a dependency follow its code. Sdists stay outside."""
@@ -351,7 +444,7 @@ def scope_report(a):
     pkg = a["pkg"]
     f = []
     for path, why in sorted(a["hooks"].items()):
-        sev = "high" if "Python start" in why else "medium"
+        sev = "high" if "Python start" in why or "replace other code" in why else "medium"
         f.append(finding(sev, "hook", f"{path}: {why}"))
     if not a["is_wheel"]:
         f.append(finding("high", "sdist", SDIST_TEXT))
@@ -364,13 +457,13 @@ def scope_report(a):
     if a["natives"]:
         f.append(finding("high", "native", NATIVE_TEXT, list(a["natives"])))
     f += design_findings(pkg)
+    f = reading_findings(a) + f
     return dict(artifact=a["art"].filename, sha256=a["art"].sha256, code_root=pkg.root(),
                 nodes=len(pkg.nodes), scope=scope_of(a), modules=module_scopes(pkg),
                 dependencies=a["deps"], findings=f, coverage=coverage(a))
 
 def coverage(a):
     c = []
-    if a["unparsed"]: c.append(f"{len(a['unparsed'])} Python files could not be parsed")
     if a["natives"]: c.append(f"{len(a['natives'])} native binaries are not checked: check them separately")
     c.extend(a["notes"])
     return c
@@ -387,10 +480,11 @@ def diff_report(a, b):
     removed = [k for k in p.nodes if k not in q.nodes]
     if not b["is_wheel"]:
         f.append(finding("high", "sdist", SDIST_TEXT))
+    f += reading_findings(b)                                  # what the new file holds that Algobank cannot check
     # hooks
     for path, why in sorted(b["hooks"].items()):
         if path not in a["hooks"]:
-            sev = "high" if "Python start" in why else "medium"
+            sev = "high" if "Python start" in why or "replace other code" in why else "medium"
             f.append(finding(sev, "hook", f"new {path}: {why}"))
     # scope: where a power newly enters, and what existing code can now reach it
     old_scope, new_scope = set(scope_of(a)), set(scope_of(b))
@@ -464,15 +558,20 @@ def with_called(r, a, algobanked):
     r["findings"] = sorted(r["findings"] + w, key=lambda x: ORDER[x["severity"]])
     return r
 
+def safe(x):
+    """Text from a package, made safe to print: control and direction characters are shown as escapes, so a
+    file name cannot rewrite the terminal (erase a line, move the cursor, reorder text)."""
+    return "".join(c if c == " " or c.isprintable() and not HIDDEN_CHARS.match(c) else f"\\u{ord(c):04x}" for c in str(x))
+
 def show_findings(fs):
     for x in fs:
         nodes = ", ".join(x["nodes"]) + (f", and {x['more']} more" if x["more"] else "")
         sev = x["severity"] + (", ignored" if x.get("ignored") else "")
-        print(f"  [{sev}] {x['text']}" + (f"\n         {nodes}" if nodes else ""))
+        print(f"  [{sev}] {safe(x['text'])}" + (f"\n         {safe(nodes)}" if nodes else ""))
 
 def print_diff(r):
     n = r["nodes"]
-    print(f"{r['old']['artifact']} -> {r['new']['artifact']}")
+    print(f"{safe(r['old']['artifact'])} -> {safe(r['new']['artifact'])}")
     print(f"  nodes (functions, classes, module values): {n['total']} ({n['unchanged']} unchanged, {n['code_changed']} code changed, "
           f"{n['dependency_changed']} affected by a changed dependency, {n['added']} added, {n['removed']} removed)")
     print(f"  scope: {', '.join(r['scope']['old']) or 'none'} -> {', '.join(r['scope']['new']) or 'none'}")
@@ -480,30 +579,30 @@ def print_diff(r):
         print("findings:"); show_findings(r["findings"])
     else:
         print("findings: none")
-    for c in r["coverage"]: print(f"  note: {c}")
+    for c in r["coverage"]: print(f"  note: {safe(c)}")
 
 def print_closure(r):
     print(f"closure of {len(r['closure'])} files  ({r['nodes']} nodes)")
     print(f"  scope: {', '.join(r['scope']) or 'none'}")
     for p in r["packages"]:
-        print(f"    {p['artifact']}: {', '.join(p['scope']) or 'none'}")
+        print(f"    {safe(p['artifact'])}: {', '.join(p['scope']) or 'none'}")
     if r["enters"]:
         print("  where each scope enters (the packages whose own code uses it):")
-        for c, arts in r["enters"].items(): print(f"    {c}: {', '.join(arts)}")
+        for c, arts in r["enters"].items(): print(f"    {safe(c)}: {safe(', '.join(arts))}")
     if r["findings"]:
         print("findings:"); show_findings(r["findings"])
-    for c in r["coverage"]: print(f"  note: {c}")
+    for c in r["coverage"]: print(f"  note: {safe(c)}")
 
 def print_scope(r):
-    print(f"{r['artifact'] or r['sha256']}  ({r['nodes']} nodes)")
+    print(f"{safe(r['artifact'] or r['sha256'])}  ({r['nodes']} nodes)")
     print(f"  scope: {', '.join(r['scope']) or 'none'}")
     for m, s in r["modules"].items():
-        if s: print(f"    {m}: {', '.join(s)}")
+        if s: print(f"    {safe(m)}: {safe(', '.join(s))}")
     if r["dependencies"]:
-        print(f"  dependencies (not analyzed here, scope unknown): {', '.join(sorted(r['dependencies']))}")
+        print(f"  dependencies (not analyzed here, scope unknown): {safe(', '.join(sorted(r['dependencies'])))}")
     if r["findings"]:
         print("findings:"); show_findings(r["findings"])
-    for c in r["coverage"]: print(f"  note: {c}")
+    for c in r["coverage"]: print(f"  note: {safe(c)}")
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="algobank", description=__doc__.split("\n")[0])
@@ -534,8 +633,10 @@ def main(argv=None):
             for r in reports: print_diff(r) if args.cmd == "diff" else print_closure(r) if "closure" in r else print_scope(r)
     except SystemExit as e:
         if isinstance(e.code, str):
-            print(e.code, file=sys.stderr); return 2
+            print(safe(e.code), file=sys.stderr); return 2
         raise
+    except Exception as e:                                    # fail closed: a file Algobank cannot analyze never passes
+        print(f"error: could not analyze: {safe(type(e).__name__)}: {safe(e)}", file=sys.stderr); return 2
     return 1 if any(x["severity"] == "high" and not x.get("ignored") for r in reports for x in r["findings"]) else 0
 
 if __name__ == "__main__":

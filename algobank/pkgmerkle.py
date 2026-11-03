@@ -23,11 +23,50 @@ MOD_CAPS = {"socket": "network", "ssl": "network", "urllib": "network", "http": 
             "httpx": "network", "aiohttp": "network", "ftplib": "network", "smtplib": "network",
             "websockets": "network", "subprocess": "process", "multiprocessing": "process",
             "shutil": "file", "tempfile": "file", "glob": "file", "ctypes": "native", "cffi": "native"}
+# more modules whose purpose is an effect: any use of them carries it
+MOD_CAPS.update({m: "network" for m in (
+    "urllib3", "poplib", "imaplib", "nntplib", "telnetlib", "xmlrpc", "socketserver", "paramiko", "asyncssh", "fabric", "boto3",
+    "botocore", "grpc", "websocket", "pycurl", "tornado", "twisted", "dns", "zmq", "redis", "pymongo", "psycopg", "psycopg2",
+    "pymysql", "MySQLdb", "mysql", "httplib2", "treq", "ldap3", "kafka", "pika", "smbclient", "pysftp", "requests_toolbelt")})
+MOD_CAPS.update({m: "process" for m in ("pty", "webbrowser", "pexpect", "sh", "plumbum", "invoke")})
+MOD_CAPS.update({m: "file" for m in ("fileinput", "sqlite3", "dbm", "mmap", "zipfile", "tarfile", "gzip", "bz2", "lzma", "aiofiles")})
+MOD_CAPS.update({"dotenv": "env", "_ctypes": "native"})
+# functions inside modules that also hold harmless ones: (module, name) -> scope
+ATTR_CAPS = {("asyncio", n): "process" for n in ("create_subprocess_exec", "create_subprocess_shell")}
+ATTR_CAPS.update({("asyncio", n): "network" for n in ("open_connection", "start_server", "open_unix_connection", "start_unix_server")})
+ATTR_CAPS.update({("concurrent", "ProcessPoolExecutor"): "process", ("io", "open"): "file", ("io", "FileIO"): "file",
+                  ("codecs", "open"): "file", ("importlib", "ExtensionFileLoader"): "native"})
+# (module, name) -> flag: code that runs other code, or changes what imports find
+ATTR_FLAGS = {("yaml", n): "dyn-exec" for n in ("load", "unsafe_load", "full_load", "load_all", "unsafe_load_all", "full_load_all", "UnsafeLoader", "Loader")}
+ATTR_FLAGS.update({("joblib", "load"): "dyn-exec", ("torch", "load"): "dyn-exec", ("numpy", "load"): "dyn-exec",
+                   ("pandas", "read_pickle"): "dyn-exec", ("types", "FunctionType"): "dyn-exec", ("types", "CodeType"): "dyn-exec",
+                   ("types", "LambdaType"): "dyn-exec", ("sys", "settrace"): "dyn-attr", ("sys", "setprofile"): "dyn-attr",
+                   ("gc", "get_objects"): "dyn-attr", ("gc", "get_referrers"): "dyn-attr", ("gc", "get_referents"): "dyn-attr",
+                   ("site", "addsitedir"): "dyn-import", ("site", "addpackage"): "dyn-import", ("site", "main"): "dyn-import"})
+ATTR_FLAGS.update({("importlib", n): "dyn-import" for n in ("spec_from_file_location", "module_from_spec", "spec_from_loader",
+                   "SourceFileLoader", "SourcelessFileLoader", "ExtensionFileLoader", "load_module", "exec_module", "reload")})
+# modules whose use is itself dynamic
+MOD_FLAGS = {"runpy": "dyn-exec", "code": "dyn-exec", "codeop": "dyn-exec", "jsonpickle": "dyn-exec", "_pickle": "dyn-exec",
+             "zipimport": "dyn-import", "imp": "dyn-import"}
+# method names distinctive enough to carry their effect on any object
+METHOD_CAPS = {n: "process" for n in ("create_subprocess_exec", "create_subprocess_shell", "subprocess_exec", "subprocess_shell",
+                                      "posix_spawn", "posix_spawnp")}
+METHOD_CAPS.update({n: "network" for n in ("open_connection", "start_server", "create_connection", "create_server",
+                    "create_datagram_endpoint", "create_unix_connection", "create_unix_server", "sock_connect", "urlopen", "urlretrieve")})
+METHOD_CAPS.update({n: "file" for n in ("iterdir", "rglob", "symlink_to", "hardlink_to", "rmdir", "lchmod", "readlink")})
+# changing these changes which code an import finds
+IMPORT_PATHS = (["sys", "path"], ["sys", "meta_path"], ["sys", "path_hooks"], ["sys", "path_importer_cache"])
 OS_ATTR = {"system": "process", "popen": "process", "execv": "process", "execl": "process", "execvp": "process",
            "spawnl": "process", "fork": "process", "kill": "process", "remove": "file", "unlink": "file",
            "rmdir": "file", "rename": "file", "replace": "file", "makedirs": "file", "mkdir": "file",
            "listdir": "file", "scandir": "file", "walk": "file", "chmod": "file",
            "environ": "env", "getenv": "env", "putenv": "env"}
+OS_ATTR.update({n: "process" for n in ("execve", "execvpe", "execle", "execlp", "execlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe",
+                                       "spawnle", "spawnlp", "spawnlpe", "posix_spawn", "posix_spawnp", "forkpty", "startfile", "killpg")})
+OS_ATTR.update({n: "file" for n in ("open", "fdopen", "truncate", "ftruncate", "symlink", "link", "chown", "lchown", "fchown", "fchmod",
+                                    "lchmod", "utime", "removedirs", "renames", "mkfifo", "mknod", "chroot", "sendfile", "setxattr",
+                                    "removexattr", "listxattr", "getxattr", "readlink", "fwalk")})
+OS_ATTR.update({"environb": "env", "unsetenv": "env", "getenvb": "env"})
 DESER_MODS = {"pickle", "marshal", "dill", "shelve", "cloudpickle"}
 FILE_ATTRS = {"write_text", "read_text", "write_bytes", "read_bytes", "unlink", "rmtree", "mkdir", "touch"}
 DYN_NAMES = {"eval": "dyn-exec", "exec": "dyn-exec", "compile": "dyn-exec", "globals": "dyn-attr",
@@ -115,7 +154,7 @@ def dotted(e):
     return None
 
 def modname_of(path):
-    m = path[:-3].replace("/", ".")
+    m = path[:path.rindex(".")].replace("/", ".")             # .py and .pyw
     return m[:-9] if m.endswith(".__init__") else m
 
 # ---- module values: top-level statements grouped by the names they bind or change ------
@@ -168,7 +207,7 @@ class Package:
         self.pins = pins or {}
         self.trees = {}
         for path, src in files.items():
-            if path.endswith(".py"):
+            if path.endswith((".py", ".pyw")):
                 try: self.trees[modname_of(path)] = (path, ast.parse(src))
                 except SyntaxError: pass
         self.funcs = {}      # node id -> (fnnode, modname, clsqual)
@@ -630,6 +669,12 @@ class Package:
                     if full[:2] == ["sys", "modules"]: pass
                 if n.attr in FILE_ATTRS: caps.add("file")
                 if n.attr in ESCAPE_ATTRS: flags.add("dyn-attr")
+                if n.attr in METHOD_CAPS: caps.add(METHOD_CAPS[n.attr])
+                if ch and ch[0] in names and names[ch[0]][0] == "ext":
+                    full = names[ch[0]][1] + ch[1:]
+                    if (full[0], full[-1]) in ATTR_CAPS: caps.add(ATTR_CAPS[(full[0], full[-1])])
+                    if (full[0], full[-1]) in ATTR_FLAGS: flags.add(ATTR_FLAGS[(full[0], full[-1])])
+                    if full[:2] in IMPORT_PATHS and not isinstance(n.ctx, ast.Load): flags.add("dyn-import")
             if isinstance(n, (ast.Assign, ast.AugAssign)):
                 tgts = n.targets if isinstance(n, ast.Assign) else [n.target]
                 for t in tgts:
@@ -639,6 +684,7 @@ class Package:
                     if isinstance(t, ast.Subscript):
                         ch = dotted(t.value)
                         if ch == ["sys", "modules"]: flags.add("dyn-patch")
+                        if ch in IMPORT_PATHS: flags.add("dyn-import")
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "__getattr__":
                 flags.add("dyn-getattr-def")
             if not isinstance(n, ast.Call): continue
@@ -750,6 +796,11 @@ class Package:
         """Scope and flags of the external name `ext` (a dotted path), when called or, with value=True, used as a value."""
         root, last = ext[0], ext[-1]
         if root in MOD_CAPS: caps.add(MOD_CAPS[root])
+        if root in MOD_FLAGS: flags.add(MOD_FLAGS[root])
+        if (root, last) in ATTR_CAPS: caps.add(ATTR_CAPS[(root, last)])
+        if (root, last) in ATTR_FLAGS: flags.add(ATTR_FLAGS[(root, last)])
+        if last in METHOD_CAPS: caps.add(METHOD_CAPS[last])
+        if ext[:2] in IMPORT_PATHS and (len(ext) > 2 or value): flags.add("dyn-import")   # sys.path.insert(...), m = sys.path
         if root == "os" and last in OS_ATTR: caps.add(OS_ATTR[last])
         if root in DESER_MODS and (value or last in ("load", "loads", "open", "Unpickler")): flags.add("dyn-exec")
         if root == "builtins" and len(ext) > 1:

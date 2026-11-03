@@ -3,7 +3,7 @@ Run: python3.14 -I v0.1/test_diff.py
 
 The wheels are built in a temporary directory and only parsed; nothing is installed or run.
 """
-import os, sys, tempfile, zipfile
+import io, os, sys, tempfile, zipfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from algobank import diff as ad
 
@@ -235,6 +235,89 @@ def test_design_findings_in_diff_are_new_cases_only():
         r = run_diff(old, new)
         hits = [x["nodes"][0] for x in r["findings"] if x["kind"] == "effect in a special method"]
         assert hits == ["demo.x:X.__str__"], hits
+
+# ---- evasions: code that runs without being analyzed, or powers under other names ---------------------------
+# Each wheel hides one thing. Each must show it: as a finding of the given kind, or in the scope.
+
+NET = "import socket\ndef go():\n    socket.create_connection(('x', 1))\n"
+EVASIONS = {   # name: (files, metadata name and version or None, (finding kind or None, scope or None))
+    "a source file in another encoding": ({"e/__init__.py": b"# -*- coding: latin-1 -*-\n# \xe9\n" + NET.encode()}, None, ("encoding", "network")),
+    "code hidden by unicode_escape": ({"e/__init__.py": b"# coding: unicode_escape\n# \\u000aimport socket; socket.create_connection(('x', 1))\n"}, None, ("encoding", "network")),
+    "a file that cannot be decoded": ({"e/__init__.py": b"# coding: no-such-codec\nx = 1\n"}, None, ("not analyzed", None)),
+    "a file that cannot be parsed": ({"e/__init__.py": "print 'python 2'\n"}, None, ("not analyzed", None)),
+    "compiled Python": ({"e/__init__.py": "", "e/__pycache__/x.cpython-314.pyc": b"\xcb\r\r\n" + bytes(12)}, None, ("compiled", None)),
+    "a versioned shared library": ({"e/__init__.py": "", "e/libx.so.1": b"\x7fELF" + bytes(60)}, None, ("native", "native")),
+    "machine code with no extension": ({"e/__init__.py": "", "e/data.bin": b"\x7fELF" + bytes(60)}, None, ("native", "native")),
+    "a .pyw module": ({"e/__init__.py": "", "e/run.pyw": NET}, None, (None, "network")),
+    "a path outside the package": ({"e/__init__.py": "", "../evil.py": NET}, None, ("path", None)),
+    "names that differ only in case": ({"e/__init__.py": "", "E/__init__.py": NET}, None, ("duplicate", None)),
+    "metadata that names another package": ({"e/__init__.py": ""}, ("other-name", "9.9"), ("metadata", None)),
+    "a decoy metadata file deeper in": ({"e/__init__.py": "", "e/vendor/decoy-0.1.dist-info/METADATA": "Metadata-Version: 2.1\nName: decoy\nVersion: 0.1\n"}, None, (None, None)),
+    "a pytest plugin entry point": ({"e/__init__.py": "", "e-1.0.dist-info/entry_points.txt": "[pytest11]\nx = e\n"}, None, ("entry point", None)),
+    "a module that shadows the standard library": ({"e/__init__.py": "", "json.py": NET}, None, ("shadowing", None)),
+    "invisible characters in code": ({"e/__init__.py": "x = 1  # \u202e reversed\n"}, None, ("hidden characters", None)),
+    "a startup file through the data scheme": ({"e/__init__.py": "", "e-1.0.data/data/lib/python3.14/site-packages/x.pth": "import e\n"}, None, ("hook", None)),
+    "a file into site-packages through the data scheme": ({"e/__init__.py": "", "e-1.0.data/data/lib/python3.14/site-packages/requests/__init__.py": NET}, None, ("hook", None)),
+    "asyncio subprocess": ({"e/__init__.py": "import asyncio\nasync def go(c):\n    await asyncio.create_subprocess_shell(c)\n"}, None, (None, "process")),
+    "os.execve": ({"e/__init__.py": "import os\ndef go(c):\n    os.execve('/bin/sh', ['sh'], {})\n"}, None, (None, "process")),
+    "yaml.unsafe_load": ({"e/__init__.py": "import yaml\ndef go(s):\n    return yaml.unsafe_load(s)\n"}, None, (None, "TOP")),
+    "runpy": ({"e/__init__.py": "import runpy\ndef go(p):\n    runpy.run_path(p)\n"}, None, (None, "TOP")),
+    "sys.path changed, then a hidden import": ({"e/__init__.py": "import sys\nsys.path.insert(0, '/tmp/x')\nimport hidden\n"}, None, (None, "TOP")),
+    "an SSH library": ({"e/__init__.py": "import paramiko\ndef go():\n    paramiko.SSHClient().connect('x')\n"}, None, (None, "network")),
+}
+
+def test_evasions_are_seen():
+    missed = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for i, (name, (files, meta, (kind, scope))) in enumerate(EVASIONS.items()):
+            path = os.path.join(tmp, f"e-1.0-py3-none-any.whl")
+            with zipfile.ZipFile(path, "w") as z:
+                for k, v in files.items(): z.writestr(k, v)
+                n, v = meta or ("e", "1.0")
+                if "e-1.0.dist-info/METADATA" not in files:
+                    z.writestr("e-1.0.dist-info/METADATA", f"Metadata-Version: 2.1\nName: {n}\nVersion: {v}\n")
+            reset()
+            a = ad.analyze(ad.load(path))
+            r = ad.scope_report(a)
+            kinds = {x["kind"] for x in r["findings"] if x["severity"] in ("high", "medium")}
+            if kind and kind not in kinds or scope and scope not in r["scope"]:
+                missed.append((name, sorted(kinds), r["scope"]))
+            if name == "a decoy metadata file deeper in" and a["release"] != ("e", "1.0"):
+                missed.append((name, a["release"]))
+    assert not missed, missed
+
+def test_a_duplicate_member_is_seen():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "e-1.0-py3-none-any.whl")
+        import warnings
+        with warnings.catch_warnings(), zipfile.ZipFile(path, "w") as z:
+            warnings.simplefilter("ignore")
+            z.writestr("e/__init__.py", "x = 1\n"); z.writestr("e/__init__.py", NET)
+            z.writestr("e-1.0.dist-info/METADATA", "Metadata-Version: 2.1\nName: e\nVersion: 1.0\n")
+        r = ad.scope_report(ad.analyze(ad.load(path)))
+        assert any(x["kind"] == "duplicate" and x["severity"] == "high" for x in r["findings"])
+
+def test_output_cannot_rewrite_the_terminal():
+    """A file name with escape codes is printed as escapes, so it cannot erase a finding from the screen."""
+    import contextlib
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pkg_wheel(tmp, "e", {"x\x1b[2K\x1b[1A.pth": "import e\n", "e/__init__.py": ""})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            assert ad.main(["scope", path]) == 1
+        assert "\x1b" not in out.getvalue() and "\\u001b" in out.getvalue()
+
+def test_a_broken_archive_fails_closed():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "e-1.0-py3-none-any.whl")
+        open(path, "wb").write(b"PK\x03\x04 not really a zip")
+        assert ad.main(["scope", path]) == 2
+
+def test_known_advisory_matches_an_equal_version():
+    """An advisory that lists 1.0 matches a wheel versioned 1.0.0: they are one version."""
+    with tempfile.TemporaryDirectory() as tmp:
+        found = known(tmp, "1.0.0", advisory("MAL-TEST-2", "demo", versions=["1.0"]))
+        assert any("MAL-TEST-2" in x["text"] for x in found), found
 
 def advisory(id, name, versions=(), ranges=(), files=()):
     """A record in the OSV format the advisories are published in."""

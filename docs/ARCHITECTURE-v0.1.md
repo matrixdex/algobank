@@ -262,12 +262,14 @@ Scopes come from a table. The key of the table is the source of an imported name
 
 | Source | Scope |
 |---|---|
-| `socket`, `ssl`, `urllib`, `http`, `requests`, `httpx`, `aiohttp`, `ftplib`, `smtplib`, `websockets` | `network` |
-| `subprocess`, `multiprocessing`; `os.system`, `os.popen`, `os.execv`, `os.execl`, `os.execvp`, `os.spawnl`, `os.fork`, `os.kill` | `process` |
-| `open()`, `shutil`, `tempfile`, `glob`; `os.remove`, `os.unlink`, `os.rmdir`, `os.rename`, `os.replace`, `os.makedirs`, `os.mkdir`, `os.listdir`, `os.scandir`, `os.walk`, `os.chmod` | `file` |
-| Methods with the names `.write_text`, `.read_text`, `.write_bytes`, `.read_bytes`, `.unlink`, `.rmtree`, `.mkdir`, `.touch` | `file` (matched by name) |
-| `os.environ`, `os.getenv`, `os.putenv` | `env` |
-| `ctypes`, `cffi` | `native` |
+| `socket`, `ssl`, `urllib`, `urllib3`, `http`, `requests`, `httpx`, `aiohttp`, `ftplib`, `smtplib`, `poplib`, `imaplib`, `nntplib`, `telnetlib`, `xmlrpc`, `socketserver`, `websockets`, `websocket`, `paramiko`, `asyncssh`, `fabric`, `boto3`, `botocore`, `grpc`, `pycurl`, `tornado`, `twisted`, `dns`, `zmq`, `redis`, `pymongo`, database drivers; `asyncio.open_connection`, `asyncio.start_server` | `network` |
+| `subprocess`, `multiprocessing`, `pty`, `webbrowser`, `pexpect`, `sh`, `plumbum`, `invoke`; `asyncio.create_subprocess_exec` and `_shell`, `concurrent.futures.ProcessPoolExecutor`; `os.system`, `os.popen`, `os.fork`, `os.forkpty`, `os.kill`, `os.killpg`, `os.startfile`, each `os.exec*`, `os.spawn*` and `os.posix_spawn*` | `process` |
+| `open()`, `io.open`, `codecs.open`, `shutil`, `tempfile`, `glob`, `fileinput`, `sqlite3`, `dbm`, `mmap`, `zipfile`, `tarfile`, `gzip`, `bz2`, `lzma`, `aiofiles`; `os.open`, `os.remove`, `os.unlink`, `os.rmdir`, `os.rename`, `os.replace`, `os.makedirs`, `os.mkdir`, `os.listdir`, `os.scandir`, `os.walk`, `os.chmod`, `os.chown`, `os.symlink`, `os.link`, `os.truncate`, `os.utime` and similar | `file` |
+| Methods with these names, on any object: `.write_text`, `.read_text`, `.write_bytes`, `.read_bytes`, `.unlink`, `.rmtree`, `.mkdir`, `.touch`, `.iterdir`, `.rglob`, `.symlink_to`, `.rmdir` (`file`); `.create_subprocess_exec`, `.subprocess_exec`, `.posix_spawn` (`process`); `.create_connection`, `.open_connection`, `.start_server`, `.urlopen`, `.urlretrieve` (`network`) | matched by name |
+| `os.environ`, `os.environb`, `os.getenv`, `os.putenv`, `os.unsetenv`, `dotenv` | `env` |
+| `ctypes`, `_ctypes`, `cffi`, `importlib.machinery.ExtensionFileLoader` | `native` |
+| `pickle`, `marshal`, `dill`, `shelve`, `cloudpickle`, `jsonpickle` loads; `yaml.load` and `yaml.unsafe_load`; `torch.load`, `joblib.load`, `numpy.load`, `pandas.read_pickle`; `runpy`, `code`, `codeop`; `types.FunctionType` and `CodeType` | `TOP` (they run code that the package does not show) |
+| A change to `sys.path`, `sys.meta_path` or `sys.path_hooks`; `site.addsitedir`; `zipimport`, `imp`, the loaders of `importlib.util` and `importlib.machinery` | `TOP` (they change which code an import runs) |
 
 ### 4.3 Roll-up [built]
 
@@ -663,11 +665,11 @@ Its code root is its identity. It is a candidate part. No log exists yet to admi
 
 | Item | Value |
 |---|---|
-| Code root | `872073de7305976415596a9c1c28983cee4dd00d6a8dfe42c5f5316b050fada4` |
+| Code root | `3a22aee0466bca868feb18c0f778ceeb555d04e424746d24a81b0cbcabe9de9b` |
 | Scope | none |
 | Scope root | `140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe` |
-| Nodes | 74 |
-| File SHA-256 | `265803dce56352b54386c82d848c2cb7fac682e86b246274893b245b9bcd5386` |
+| Nodes | 81 |
+| File SHA-256 | `d37a4d78f50a5ce70a7a1dc62ce0ebefc7b1b422d8d7bfc0f27cc044bc7b5b2a` |
 | Python | 3.14 |
 
 To compute these values again:
@@ -724,11 +726,11 @@ Resolved: `Tag.copy_self` (beautifulsoup4), and `_SelectorContext.debug`, `Immut
 
 **Self-analysis.** Algobank analyzed `pkgmerkle.py` alone:
 
-- It has 74 nodes.
+- It has 81 nodes.
 - It has no scope.
 - It has no `TOP`.
 - Repeated runs give the same hashes.
-- A one-line change to `H()` changes `H`. It also changes the 8 nodes that call `H` directly or indirectly. The other 65 nodes keep their hashes.
+- A one-line change to `H()` changes `H`. It also changes the 8 nodes that call `H` directly or indirectly. The other 72 nodes keep their hashes.
 
 ### 10.4 Proof of the code root
 
@@ -831,6 +833,14 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 | New `file` scope. Other new dynamic code: computed imports and attributes, `__getattr__`, `import *`. A new entry point or installed script. | medium |
 | An effect in a special method: a special method other than `__init__`, or a property or descriptor, whose own code uses `file`, `network`, `process`, `env` or `native`. Python runs it without a visible call. | medium. In `diff`, new cases only. |
 | An effect under a shared name: a function whose own code uses such a scope, and whose name other functions also have. Calls matched by name reach it from unrelated code. Special-method names are not counted: `K()` finds `__init__` by class. | medium. In `diff`, new cases only. In a closure, names count across all its packages. |
+| A Python file (`.py` or `.pyw`) that cannot be decoded or parsed. Algobank decodes each file as Python does: by its byte order mark or its coding line (PEP 263). | high: not analyzed (`TOP`) |
+| Compiled Python (`.pyc`, `.pyo`). Python can run it in place of the source. | high: not checked |
+| A file stored twice in the archive. Two paths that differ only in case or Unicode form. A path outside the package, or with a backslash. A file too large to read. | high: the code analyzed may not be the code installed |
+| Package metadata that is missing, or that names another package or version than the file name. More than one top-level metadata file. Only the top-level `.dist-info` counts: a vendored copy deeper in the archive is not the package's. | high |
+| A top-level module named like a standard library module, such as `json.py`. Programs that import that name may run the package's code. | high |
+| An entry point in a group that a tool loads by itself, such as `pytest11` or `distutils.commands`. Installing the package is enough for its code to run. | high |
+| A file that the `data` scheme installs into site-packages or a `bin` folder, or a startup file installed that way. Other files that the scheme installs outside the package. | high; other files medium |
+| A source file that declares an encoding other than UTF-8. Invisible or direction-changing characters in source code (Trojan Source). | medium |
 | A changed dependency range. New or changed data files. | low |
 
 **Called packages.** Each package that a package calls must be algobanked too. These are the `Requires-Dist` dependencies in its metadata. This is a soft condition:
@@ -874,6 +884,8 @@ This does not stop algobanking. Algobank keeps the report with the binaries flag
 
 Thus the tool can gate a CI job. `--json` gives the same report for programs and agents. The report also tells what it could not see: unparsed files and native binaries.
 
+**Reading.** A native binary is found by its name (`.so`, `.so.1`, `.pyd`, `.dylib`, `.dll`) and by its first bytes (ELF, PE, Mach-O, WebAssembly), whatever the file is called. Text from a package (file names, dependency names, entry points) is printed with control and direction characters as escapes. Thus a file name cannot erase a finding from the terminal. A file that Algobank cannot read, or an error while it analyzes one, ends the run with status 2. Nothing passes unread.
+
 **Known data.** Each release of Algobank ships `algobank/known.json`. `v0.1/build_cache.py` builds it. It holds the published advisory records for the 1,000 most downloaded PyPI packages. The records are in OSV format. They are not changed. Algobank needs no network for them at run time. They come through the package manager, like any package.
 
 The file contains:
@@ -885,7 +897,7 @@ Rules:
 
 1. **Records are data. The code decides.** Algobank ships the records as published. `algobank/diff.py` decides on the machine of the user if a record applies. A record applies to a version in its list. A record also applies to a version in one of its ranges. Algobank compares versions with PEP 440 order. A codegen can read the records. It can also read the code. Algobank trusts nothing that was interpreted elsewhere.
 2. **Algobank never matches a withdrawn advisory.** Its publisher retracted it. Thus the versions that it named must pass. The record stays in `known.json`. Records are only added.
-3. **A match is a high finding.** The finding names the advisory identifier. It points to `known.json`. The result of the analysis does not change this.
+3. **A match is a high finding.** The finding names the advisory identifier. It points to `known.json`. The result of the analysis does not change this. A version in an advisory's list matches by PEP 440 equality: `1.0` matches `1.0.0`. Algobank matches the name and version in the metadata, and also those in the file name if they differ.
    - Sometimes a version cannot be compared with a range. Then the advisory can apply. Thus Algobank reports it.
    - Algobank checks each file in the archive against the published malicious-file digests. Thus Algobank also catches a repackaged copy.
    - Some advisories have two identifiers: a `MAL-` record and its `PYSEC-` alias. Algobank ships such an advisory once.
@@ -899,7 +911,7 @@ Rules:
 | Synthetic wheels that copy attack patterns. A `.pth` file with a module that reads the environment and uses the network (LiteLLM 1.107.0). An existing formatting function that starts to use the network (chalk/debug). New `exec`. A new native binary. A new dependency. | Each gives the expected high or medium finding (`test_diff.py`). |
 | A clean update of the same synthetic package. A dependency range that changes only in format. | No findings |
 | A new test-only dependency (`setuptools ; extra == 'testing'`) | High. Optional dependencies also bring code that is not analyzed. |
-| The wheel of Algobank (`algobank scope dist/algobank-1.0.3-py3-none-any.whl`) | `file`, in `load` and `known`. `load` reads the one file that it gets. `known` reads `known.json`. No network. No other findings. |
+| The wheel of Algobank (`algobank scope dist/algobank-1.0.3-py3-none-any.whl`) | `file`, in `load`, `known` and `read_members`. `load` reads the one file that it gets. `known` reads `known.json`. `read_members` reads the archive in memory with `zipfile` and `tarfile`. No network. No other findings. |
 | The sdist of Algobank | High. Its build runs `flit_core`. |
 | Normal updates of popular packages: requests 2.31.0→2.32.3, urllib3 2.2.1→2.2.2, idna 3.6→3.7, rich 13.7.0→13.7.1, packaging 24.0→24.1 | Four have no medium or high findings. requests has one real change, flagged high: a new computed import. It runs at import time. It selects a character-detection library. |
 | dexweb 4.2.2→4.2.3 | `process` is reported as new. It comes in at `Dexweb.run_git`. |
