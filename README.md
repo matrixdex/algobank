@@ -5,6 +5,21 @@ Algobank gives every function in a Python package a content hash (code Merkle tr
 
 Designed for use by codegens (coding agents, human maintainers and bots)
 
+## Notice: algobank 1.0.0, 1.0.1 and 1.0.2 are yanked
+
+Upgrade to algobank 1.0.3 or later: `pip install --upgrade algobank`. A yanked version still installs when a requirement pins it exactly (`algobank==1.0.2`). Change such pins.
+
+A security review on 2026-11-03 found detection holes in algobank 1.0.0, 1.0.1 and 1.0.2. These versions can pass a malicious package with no high finding. They miss:
+
+- code they cannot read: Python files in another source encoding, compiled `.pyc` files, `.pyw` files, and files stored twice in an archive;
+- native code without a known file extension, such as `libx.so.1`;
+- names that disagree: metadata that names another package, and a vendored metadata file read in place of the package's own;
+- code that runs without an import: pytest and setuptools plugins, modules named like standard library modules, and files installed into site-packages;
+- powers under names that their tables lack, such as `os.execve`, `asyncio.create_subprocess_shell`, SSH and cloud clients, and `yaml.unsafe_load`;
+- powers that travel without a visible call: modules and functions passed as values, `getattr(os, "system")`, `builtins.exec`, operators, properties and decorators.
+
+Algobank 1.0.3 fixes these. The three versions are yanked on PyPI and rejected in the [bank](https://matrixdex.github.io/algobank). If you used one of them, run algobank 1.0.3 again on the packages it checked.
+
 ## Diff tool
 
 Before you or your coding agent add or update a dependency, see what changed and what it can do now:
