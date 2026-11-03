@@ -10,36 +10,83 @@ subprocess.run(["git", "fetch", "-q", "origin", "live"], check=True)
 bank = subprocess.run(["git", "show", "origin/live:bank.jsonl"], capture_output=True, text=True, check=True).stdout
 records = [json.loads(line) for line in bank.splitlines() if line.strip()]
 
-# THE CODE ROOT AS A STRIP: every banked version is analyzed again at each build, by Algobank's own code
-import hashlib, math, sys, tempfile
+# THE CODE ROOT AS A STRIP: every banked version is analyzed again at each build. A code root is defined by the
+# version of Algobank that computed it, so each record is checked by the algobank its record names (algobanked_by),
+# run alone in its own Python. That algobank must itself be in the bank.
+import hashlib, math, sys, tempfile, zipfile
 sys.path.insert(0, "..")
+from algobank.diff import vkey
+HIGH = {"network", "process", "env", "native", "TOP"}
+WORKER = r"""
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
 from algobank import diff as ad
 from algobank.pkgmerkle import Package
-HIGH = {"network", "process", "env", "native", "TOP"}
-nodes = {}                                                  # (name, version) -> the nodes of that version
-with tempfile.TemporaryDirectory() as tmp:
-    for r in records:
-        key = (r["name"], r["version"])
-        if r.get("file"):                                   # the file itself, from PyPI, checked against the bank
-            subprocess.run([sys.executable, "-m", "pip", "download", "-q", "--no-deps", "--only-binary", ":all:", "-d", tmp,
-                            f"{r['name']}=={r['version']}"], check=True)
-            data = open(os.path.join(tmp, r["file"]), "rb").read()
-            if hashlib.sha256(data).hexdigest() != r["sha256"]:
-                sys.exit(f"{r['file']}: SHA-256 differs from bank.jsonl")
-            pkg = ad.analyze(ad.Artifact(r["file"], data))["pkg"]
-        else:                                               # no file: the source commit named in the record
-            commit = re.fullmatch(r"https://github\.com/matrixdex/algobank/tree/([0-9a-f]+)", r["source"]).group(1)
-            names = subprocess.run(["git", "ls-tree", "-r", "--name-only", "--full-tree", commit, "algobank/"], capture_output=True, text=True, check=True).stdout.split()
-            pkg = Package({f: subprocess.run(["git", "show", f"{commit}:{f}"], capture_output=True, text=True, check=True).stdout
-                           for f in names if f.endswith(".py")})
-        if pkg.root() != r["code_root"]:
-            sys.exit(f"{r['name']} {r['version']}: code root differs from bank.jsonl")
-        nodes[key] = pkg.nodes
+out = []
+for kind, path in json.loads(sys.stdin.read()):
+    if kind == "file":
+        p = ad.analyze(ad.Artifact(os.path.basename(path), open(path, "rb").read()))["pkg"]
+    else:
+        p = Package({os.path.relpath(os.path.join(d, f), path): open(os.path.join(d, f)).read()
+                     for d, _, fs in os.walk(path) for f in fs if f.endswith(".py")})
+    out.append(dict(root=p.root(), nodes={n: [x["own"], x["size"], sorted(x["caps"])] for n, x in p.nodes.items()}))
+print(json.dumps(out))
+"""
+by_key = {(r["name"], r["version"]): r for r in records}
+def prev_of(r):
+    older = [x for x in records if x["name"] == r["name"] and vkey(x["version"]) < vkey(r["version"])]
+    return max(older, key=lambda x: vkey(x["version"])) if older else None
+def analyzer_of(r):
+    m = re.match(r"algobank (\S+)", r.get("algobanked_by", ""))
+    if not m or ("algobank", m.group(1)) not in by_key:
+        sys.exit(f"{r['name']} {r['version']}: algobanked_by names no algobank that is in the bank")
+    return m.group(1)
+tmp = tempfile.mkdtemp()
+inputs = {}                                                 # (name, version) -> ("file", path) or ("tree", folder)
+for r in records:
+    key = (r["name"], r["version"])
+    if r.get("file"):                                       # the file itself, from PyPI, checked against the bank
+        subprocess.run([sys.executable, "-m", "pip", "download", "-q", "--no-deps", "--only-binary", ":all:", "-d", tmp,
+                        f"{r['name']}=={r['version']}"], check=True)
+        path = os.path.join(tmp, r["file"])
+        if hashlib.sha256(open(path, "rb").read()).hexdigest() != r["sha256"]:
+            sys.exit(f"{r['file']}: SHA-256 differs from bank.jsonl")
+        inputs[key] = ("file", path)
+    else:                                                   # no file: the source commit named in the record
+        commit = re.fullmatch(r"https://github\.com/matrixdex/algobank/tree/([0-9a-f]+)", r["source"]).group(1)
+        folder = os.path.join(tmp, f"src-{commit}")
+        os.makedirs(folder, exist_ok=True)
+        archive = subprocess.run(["git", "archive", commit, "algobank"], cwd="..", capture_output=True, check=True).stdout
+        subprocess.run(["tar", "-x", "-C", folder], input=archive, check=True)
+        inputs[key] = ("tree", folder)
+def analyzer_dir(version):                                  # a folder holding that version's algobank/ package
+    kind, path = inputs[("algobank", version)]
+    if kind == "tree": return path
+    folder = os.path.join(tmp, f"algobank-{version}")
+    with zipfile.ZipFile(path) as z:
+        z.extractall(folder, [m for m in z.namelist() if m.startswith("algobank/")])
+    return folder
+jobs = {}                                                   # analyzer version -> versions it analyzes
+for r in records:
+    v = analyzer_of(r)
+    jobs.setdefault(v, []).append((r["name"], r["version"]))
+    if prev_of(r): jobs[v].append((prev_of(r)["name"], prev_of(r)["version"]))
+nodes = {}                                                  # (name, version, analyzer) -> the nodes of that version
+for v, keys in jobs.items():
+    keys = sorted(set(keys))
+    res = subprocess.run([sys.executable, "-I", "-c", WORKER, analyzer_dir(v)], input=json.dumps([inputs[k] for k in keys]),
+                         capture_output=True, text=True, check=True).stdout
+    for k, x in zip(keys, json.loads(res)):
+        nodes[k + (v,)] = dict(root=x["root"], nodes={n: dict(own=o, size=sz, caps=set(c)) for n, (o, sz, c) in x["nodes"].items()})
+for r in records:
+    if nodes[(r["name"], r["version"], analyzer_of(r))]["root"] != r["code_root"]:
+        sys.exit(f"{r['name']} {r['version']}: code root differs from bank.jsonl (computed by algobank {analyzer_of(r)})")
+shutil.rmtree(tmp)
 def strip(r):                                               # one slice per node, sized by its code; yellow: own code changed
-    new = nodes[(r["name"], r["version"])]
-    older = [x for x in records if x["name"] == r["name"] and ad.vkey(x["version"]) < ad.vkey(r["version"])]
-    prev = max(older, key=lambda x: ad.vkey(x["version"])) if older else None
-    old = nodes[(prev["name"], prev["version"])] if prev else None
+    v = analyzer_of(r)                                      # both versions by the same algobank, so own hashes compare
+    new = nodes[(r["name"], r["version"], v)]["nodes"]
+    prev = prev_of(r)
+    old = nodes[(prev["name"], prev["version"], v)]["nodes"] if prev else None
     ids = sorted(set(new) | set(old or {}))                 # a removed node keeps its place
     size = {n: math.sqrt(max((new.get(n) or old.get(n))["size"], 1)) for n in ids}
     total, x, slices, marks, red = sum(size.values()), 0.0, [], [], 0

@@ -164,6 +164,8 @@ A package with no nodes has the root `H("empty")`.
 
 The root commits to names and content. Names are the public interface. A new function name changes the root. New formatting does not change the root.
 
+**The rules have versions.** The code root depends on the rules that build the graph: normalization, edges and pins. A new version of Algobank can change these rules. Then the same code can get a different code root. Thus a code root is defined by the version of Algobank that computed it. Each bank record names that version (`algobanked_by`). A check of a record runs that version. A pass never moves to new rules. The new version analyzes the code again, and a new record holds its result.
+
 Proven properties (section 10.4). These properties assume a collision-resistant hash:
 
 - **Binding.** Two packages have the same code root only if they have the same set of (node id, Merkle hash) pairs.
@@ -283,13 +285,31 @@ The scope of a package is the union of the scopes of its nodes. The scope root i
 | Construct | Flag | Effect |
 |---|---|---|
 | Import with a computed name (`importlib.import_module(x)`, `__import__(x)`). Entry-point loading. | `dyn-import` | `TOP`. Also an edge to each module in the package. Thus a change to any module invalidates the node. |
-| `getattr`, `setattr`, `delattr` with a computed name. `globals()`, `locals()`, `vars()`. | `dyn-attr` | `TOP` |
+| `getattr`, `setattr`, `delattr` with a computed name, unless the name comes from a fixed list (below). `globals()`, `locals()`, `vars()`. | `dyn-attr` | `TOP` |
 | `eval`, `exec`, `compile`. Loads from `pickle`, `marshal`, `dill`, `shelve`. | `dyn-exec` | `TOP` |
 | Assignment to an attribute of an imported module. A write to `sys.modules`. | `dyn-patch` | `TOP` |
 
 Algobank resolves an import of a package module with a literal name as a normal import.
 
 `TOP` goes to each caller. A `TOP` node cannot get a result such as "uses no network". It can get only results that are true for all of its possible behaviors.
+
+**Names from fixed lists.** Algobank resolves `getattr(x, name)` when the code fixes every value of `name`:
+
+- a string literal;
+- a loop or comprehension over a literal tuple, list or set of strings, or over a slice of one;
+- one element of such a list, such as `keys[i]`;
+- a loop over a list that the package fixes on its classes: `__slots__`, the fields of a dataclass, or a class-level tuple of strings.
+
+The name must have no other binding in the function. A local list must not change in place. Then `getattr(x, name)` is like the call `x.name()` for each possible name: it gets an edge to each method with that name. A `setattr` or `delattr` by such a name is like a plain write.
+
+A class-level list counts only if no code in the package can change it:
+
+- no other write goes to an attribute with that name;
+- no write with a computed name goes through a class of the same family (a base or a subclass);
+- no write with a computed name goes through an instance of such a class, unless each class in the family uses `__slots__`. An instance without a `__dict__` cannot hide a class attribute;
+- no write with a computed name goes through any other object.
+
+Assumption: classes outside the package do not subclass classes of the package.
 
 ### 4.5 Compute and effect parts [spec]
 
@@ -582,7 +602,7 @@ Each package is a version. The version is the exact code that Algobank received.
 | `algobank/pkgmerkle.py` | The analyzer. It computes the code Merkle tree. It resolves calls. It detects and rolls up scope. It flags `TOP`. It computes the code root and the scope root. It uses the standard library only. |
 | `v0.1/synth_demo.py` | Test on a synthetic package of eight files. The package has a dynamic plugin loader and a computed `getattr` dispatcher. Its plugins use files and the network. |
 | `v0.1/dexweb_v2.py` | Release-history test over each published wheel of the `dexweb` package. |
-| `v0.1/test_pkgmerkle.py` | Regression tests. They cover full digests and prefixes. They cover module-level dependencies: constants, imported constants, class attributes, `global` writers, references, registries, conditional imports and star imports. They cover precision: unrelated changes do not spread. They cover method calls: subclass overrides, `super()`, call results, and receivers that must never be narrowed. There is one test for each checker condition. |
+| `v0.1/test_pkgmerkle.py` | Regression tests. They cover full digests and prefixes. They cover names from fixed lists, with escape tests. They cover implicit calls (section 10.3). They cover module-level dependencies: constants, imported constants, class attributes, `global` writers, references, registries, conditional imports and star imports. They cover precision: unrelated changes do not spread. They cover method calls: subclass overrides, `super()`, call results, and receivers that must never be narrowed. There is one test for each checker condition. |
 | `pyproject.toml` | Package metadata for PyPI. The build backend is `flit_core`. It has no dependencies. The wheel contains only `algobank/`. |
 | `algobank/diff.py` | The diff tool and the `algobank` command. It compares two versions of a package. It reports new scope, dynamic code, hooks, binaries and dependencies (section 10.6). |
 | `v0.1/test_diff.py` | Tests for the diff tool. They use synthetic wheels that copy real attack patterns. |
@@ -610,11 +630,11 @@ Its code root is its identity. It is a candidate part. No log exists yet to admi
 
 | Item | Value |
 |---|---|
-| Code root | `ef9e84687a74c28fd06aa5867b3e4a447f9bbdea68087a8b1ceb649ec1c503ab` |
+| Code root | `ff6bf50fdfcfa74914c3eaa4b2133a4f667c437bdd2e28848b1131c48f69abca` |
 | Scope | none |
 | Scope root | `140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe` |
-| Nodes | 50 |
-| File SHA-256 | `601182eaf3303372010e79c2fcd7c47015544ab43588a41976e96f24f53a8916` |
+| Nodes | 54 |
+| File SHA-256 | `21d8916046a3c3bac50449eb74522ed7668cb1b2128c3b89a73225c80bbe8adb` |
 | Python | 3.14 |
 
 To compute these values again:
@@ -654,13 +674,24 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))"
 
 The dexweb numbers come from one small package with one author. Do not make general conclusions from them.
 
+**Names from fixed lists** (`test_pkgmerkle.py`). Measured on the nine dependencies in the bank, before and after the rule:
+
+- nodes with dynamic code: 33 before, 27 after;
+- nodes that reach `TOP`: 657 before, 591 after;
+- soupsieve: 62 nodes reach `TOP` before, 0 after;
+- nodes that get a new concrete scope: 0.
+
+The resolved nodes are `Tag.copy_self` (beautifulsoup4), `Color.as_operator` (pypdf), and `_SelectorContext.debug`, `Immutable.__eq__`, `Immutable.__repr__` and `_pickle` (soupsieve). The other nodes take names from data, forward attributes, or run in a class family with computed writes. They keep `TOP`. Escape tests keep `TOP` for a rebound name, a list changed in place, a computed collection, a list written elsewhere, and computed writes through a class, an instance with a `__dict__` or another object.
+
+**Implicit calls** (`test_pkgmerkle.py`). Python runs some code that no call in the source names. 38 cases test this. Each case links a function to a socket only through one such mechanism. 4 cases are linked: the explicit method call that checks the test itself, a constructor that runs `__init__`, `raise E()`, and a default argument. 34 cases are not linked yet: operators, protocols such as `for`, `with` and `len`, properties and descriptors, `__getattr__` and `__setattr__`, `__new__` and metaclasses, class creation, decorators, functions passed as values, and imports inside functions. In each case the scope of the package is correct, because the target node has the scope. The scope of the calling node is too small, and its Merkle hash does not follow the target. The test lists these 34 cases by name. It fails when one of them changes.
+
 **Self-analysis.** Algobank analyzed `pkgmerkle.py` alone:
 
-- It has 50 nodes.
+- It has 54 nodes.
 - It has no scope.
 - It has no `TOP`.
 - Repeated runs give the same hashes.
-- A one-line change to `H()` changes `H`. It also changes the 8 nodes that call `H` directly or indirectly. The other 41 nodes keep their hashes.
+- A one-line change to `H()` changes `H`. It also changes the 8 nodes that call `H` directly or indirectly. The other 45 nodes keep their hashes.
 
 ### 10.4 Proof of the code root
 
@@ -904,7 +935,7 @@ The repository is the full company. Each branch has one role:
 
 Each website is a dex. dexweb builds it. `python run.py` in `site/` writes the website to `site/gen/`. dexweb publishes it to `web`.
 
-**The index is the bank.** Its title is "algobank Algorithm Bank". At each build, `run.py` renders `bank.jsonl` from `live` into the index template in `site/config.json`. It also checks the bank. It downloads each banked file with pip. It checks the SHA-256 of each file against its record. It runs Algobank on each file and checks the code root against the record. A record without a file is computed from the source commit that it names. Any difference stops the build. The index has these items:
+**The index is the bank.** Its title is "algobank Algorithm Bank". At each build, `run.py` renders `bank.jsonl` from `live` into the index template in `site/config.json`. It also checks the bank. It downloads each banked file with pip. It checks the SHA-256 of each file against its record. It runs, for each record, the version of Algobank that the record names (`algobanked_by`), in its own Python process. That version is itself in the bank: its PyPI file or its source commit. It checks the code root against the record. A record without a file is computed from the source commit that it names. Any difference stops the build. The index has these items:
 
 - Five lines that say what Algobank is. They are plain text in the page, for people and for agents. One line shows at a time, for 4 seconds. A pointer on the line stops the motion. With reduced motion set, all five lines show and nothing moves.
 - A search bar. It takes `package` or `package v1.2.3`. A link can carry `?q=`.

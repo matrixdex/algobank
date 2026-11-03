@@ -7,6 +7,7 @@ Improvements over merkle_code.py / release_reuse.py:
   * dynamic constructs are detected, flagged, and made conservative:
       - non-literal import / getattr / eval / exec / monkey-patching  -> capability TOP
       - non-literal import                                            -> edge to EVERY module in the package
+  * getattr with a name drawn from a fixed list in the code is resolved like a plain call by name (see _names)
   * capabilities come from a table keyed by the import origin, not only from bare names
 """
 import ast, builtins, copy, hashlib, sys
@@ -142,6 +143,7 @@ class Package:
         for nid in self.funcs:
             self.by_method.setdefault(nid.split(":", 1)[1].split(".")[-1], []).append(nid)
 
+        self._name_tables()
         self.nodes = {}
         self._analyze()
 
@@ -208,12 +210,170 @@ class Package:
         if not out and not f"{mod}.{name}" in self.trees: out.append(f"{mod}:<module>")
         return out
 
+    # ---- names drawn from fixed lists ---------------------------------------
+    # getattr(x, name) is TOP unless every value `name` can take is fixed by the code: a string literal, a loop
+    # over a literal collection, or a loop over a list the package fixes on its classes (__slots__, dataclass
+    # fields, a class-level tuple of strings). Such a list counts only if no code in the package can change it:
+    # a computed attribute write through a class, or through an instance that has a __dict__, could replace it.
+    # Assumption (closed world): classes outside the package do not subclass package classes.
+    def _name_tables(self):
+        cdefs = {}                                            # class name -> ClassDef nodes (by name: over-approximate)
+        for mod, (path, tree) in self.trees.items():
+            for n in ast.walk(tree):
+                if isinstance(n, ast.ClassDef): cdefs.setdefault(n.name, []).append(n)
+        lit = lambda v: isinstance(v, (ast.Tuple, ast.List, ast.Set)) and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in v.elts)
+        self.lists, bad = {}, set()                           # class-level list name -> union of its literal values
+        bases, slotted = {}, {}
+        for name, defs in cdefs.items():
+            for c in defs:
+                bases.setdefault(name, set()).update(b.id if isinstance(b, ast.Name) else b.attr if isinstance(b, ast.Attribute) else "?" for b in c.bases)
+                own = None
+                for st in c.body:
+                    if isinstance(st, (ast.Assign, ast.AnnAssign)):
+                        tg = st.targets if isinstance(st, ast.Assign) else [st.target]
+                        for t in tg:
+                            if not isinstance(t, ast.Name) or st.value is None: continue
+                            if len(tg) == 1 and lit(st.value): self.lists.setdefault(t.id, set()).update(e.value for e in st.value.elts)
+                            else: bad.add(t.id)
+                            if t.id == "__slots__": own = {e.value for e in st.value.elts} if lit(st.value) else {"__dict__"}
+                slotted[name] = slotted.get(name, True) and own is not None and "__dict__" not in own
+                deco = [d.func if isinstance(d, ast.Call) else d for d in c.decorator_list]
+                if any((d.id if isinstance(d, ast.Name) else d.attr if isinstance(d, ast.Attribute) else "") == "dataclass" for d in deco):
+                    self.lists.setdefault("__dataclass_fields__", set()).update(
+                        st.target.id for st in c.body if isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name))
+        # any other write to a list's name, anywhere, disqualifies it
+        writes = []                                           # computed-name attribute writes: (kind, class name)
+        for mod, (path, tree) in self.trees.items():
+            parent = {ch: nd for nd in ast.walk(tree) for ch in ast.iter_child_nodes(nd)}
+            def owner(n):                                     # the class whose method holds n, and the method
+                fn = None
+                while n in parent:
+                    n = parent[n]
+                    if fn is None and isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)): fn = n
+                    if isinstance(n, ast.ClassDef) and fn is not None and parent.get(fn) is n: return n.name, fn
+                return None, fn
+            for n in ast.walk(tree):
+                if isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del)): bad.add(n.attr)
+                if isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name): bad.add(n.target.id)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("append", "extend", "insert", "remove", "pop", "clear", "update", "add", "discard") \
+                        and isinstance(n.func.value, ast.Attribute):
+                    bad.add(n.func.value.attr)                # e.g. self._fields.append(...)
+                recv, name = None, None
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in ("setattr", "delattr") and len(n.args) >= 2:
+                    recv, name = n.args[0], n.args[1]
+                elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("__setattr__", "__delattr__") and n.args:
+                    recv, name = n.func.value, n.args[0]
+                elif isinstance(n, (ast.Subscript, ast.Call)):    # vars(x)[k] = v, x.__dict__[k] = v, x.__dict__.update(...)
+                    tgt = n.value if isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Store) else \
+                          n.func.value if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("update", "setdefault", "__setitem__") else None
+                    if isinstance(tgt, ast.Attribute) and tgt.attr == "__dict__": recv, name = tgt.value, None
+                    elif isinstance(tgt, ast.Call) and isinstance(tgt.func, ast.Name) and tgt.func.id == "vars" and tgt.args: recv, name = tgt.args[0], None
+                    else: continue
+                else: continue
+                if isinstance(name, ast.Constant) and isinstance(name.value, str):
+                    bad.add(name.value); continue
+                cls, fn = owner(n)
+                first = fn.args.args[0].arg if fn and fn.args.args else None
+                is_cm = fn is not None and any(isinstance(d, ast.Name) and d.id == "classmethod" for d in fn.decorator_list)
+                r = recv.func if isinstance(recv, ast.Call) else recv
+                if cls and isinstance(r, ast.Name) and r.id == "super": writes.append(("cls" if is_cm else "inst", cls))
+                elif cls and isinstance(recv, ast.Name) and recv.id == first: writes.append(("cls" if is_cm else "inst", cls))
+                elif isinstance(recv, ast.Name) and recv.id in cdefs: writes.append(("cls", recv.id))
+                else: writes.append(("any", None))
+        for x in bad: self.lists.pop(x, None)
+        # the class hierarchy inside the package, by class name
+        down = {c: {c} for c in bases}
+        changed = True
+        while changed:
+            changed = False
+            for c, bs in bases.items():
+                for b in bs:
+                    if b in down and not down[c] <= down[b]: down[b] |= down[c]; changed = True
+        up = {c: {a for a in down if c in down[a]} for c in down}
+        def nodict(c):                                        # every class of c's line is slotted, and all bases are known
+            line = up.get(c, {c})
+            return all(slotted.get(a, False) and all(b in down or b == "object" for b in bases.get(a, ())) for a in line)
+        self.taint = set()                                    # classes whose instances may hold a replaced list; None: all
+        for kind, c in writes:
+            if kind == "any": self.taint = None; break
+            fam = {x for d in down.get(c, {c}) for x in up.get(d, {d})} | {x for u in up.get(c, {c}) for x in down.get(u, {u})}
+            if kind == "cls" or not all(nodict(d) for d in down.get(c, {c})): self.taint |= fam
+
+    def _elems(self, e, ctx, depth=0):
+        """The strings iterating `e` can yield, if the code fixes them; otherwise None."""
+        if depth > 8: return None
+        if isinstance(e, (ast.Tuple, ast.List, ast.Set)) and all(isinstance(x, ast.Constant) and isinstance(x.value, str) for x in e.elts):
+            return {x.value for x in e.elts}
+        if isinstance(e, ast.Subscript) and isinstance(e.slice, ast.Slice):
+            return self._elems(e.value, ctx, depth + 1)       # a slice yields a subset
+        if isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr == "keys" and not e.args:
+            return self._elems(e.func.value, ctx, depth + 1)
+        if isinstance(e, ast.Attribute) and e.attr in self.lists:
+            if self.taint is None: return None
+            r = e.value.func if isinstance(e.value, ast.Call) else e.value
+            mine = ctx["cls"] and isinstance(r, ast.Name) and (r.id in ("self", "cls", "super") or r.id == ctx["first"])
+            if (ctx["cls"] in self.taint) if mine else self.taint: return None
+            return set(self.lists[e.attr])
+        if isinstance(e, ast.Name):                           # a local name assigned only from fixed lists
+            binds = ctx["binds"].get(e.id)
+            if not binds or any(k != "assign" for k, _ in binds): return None
+            out = set()
+            for _, v in binds:
+                s = self._elems(v, ctx, depth + 1)
+                if s is None: return None
+                out |= s
+            return out
+        return None
+
+    def _names(self, e, ctx):
+        """The strings `e` can evaluate to, if the code fixes them; otherwise None."""
+        if isinstance(e, ast.Constant) and isinstance(e.value, str): return {e.value}
+        if isinstance(e, ast.Subscript) and not isinstance(e.slice, ast.Slice):
+            return self._elems(e.value, ctx)                  # one element of a fixed list
+        if isinstance(e, ast.Name):
+            binds = ctx["binds"].get(e.id)
+            if not binds or any(k != "loop" for k, _ in binds): return None
+            out = set()
+            for _, it in binds:
+                s = self._elems(it, ctx)
+                if s is None: return None
+                out |= s
+            return out
+        return None
+
+    def _bindings(self, root):
+        """Every binding of a name in `root`: ('loop', iterable), ('assign', value) or ('other', None)."""
+        parent = {ch: nd for nd in ast.walk(root) for ch in ast.iter_child_nodes(nd)}
+        out = {}
+        add = lambda k, kind, v: out.setdefault(k, []).append((kind, v))
+        for n in ast.walk(root):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+                p = parent.get(n)
+                if isinstance(p, (ast.For, ast.AsyncFor, ast.comprehension)) and p.target is n: add(n.id, "loop", p.iter)
+                elif isinstance(p, ast.Assign) and p.targets == [n]: add(n.id, "assign", p.value)
+                else: add(n.id, "other", None)
+            elif isinstance(n, ast.arg): add(n.arg, "other", None)
+            elif isinstance(n, ast.Subscript) and isinstance(n.ctx, (ast.Store, ast.Del)) and isinstance(n.value, ast.Name):
+                add(n.value.id, "other", None)                # names[0] = x changes a list in place
+            elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) \
+                    and n.func.attr in ("append", "extend", "insert", "remove", "pop", "clear", "update", "add", "discard", "__setitem__"):
+                add(n.func.value.id, "other", None)           # names.append(x) too
+            elif isinstance(n, (ast.Global, ast.Nonlocal)):
+                for g in n.names: add(g, "other", None)
+            elif isinstance(n, ast.alias): add((n.asname or n.name).split(".")[0], "other", None)
+            elif isinstance(n, ast.ExceptHandler) and n.name: add(n.name, "other", None)
+            elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name: add(n.name, "other", None)
+            elif isinstance(n, ast.MatchMapping) and n.rest: add(n.rest, "other", None)
+            elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n is not root: add(n.name, "other", None)
+        return out
+
     # ---- scanning ----------------------------------------------------------
     def _scan(self, root, mod, cls, names, skeleton=False, local=None):
         """-> (edges, caps, flags, ext_roots, stats, reads). Reads are collected when `local` is given:
         the names that are local to the scanned code and so are not module-level reads."""
         edges, caps, flags, ext_roots, reads = set(), set(), set(), set(), set()
         stats = {"cross": 0, "cha": 0}
+        ctx = None                                            # name bindings, built on the first getattr
         mod_skel = lambda m: f"{m}:<module>"
         for n in ast.walk(root):
             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in names and names[n.id][0] == "ext":
@@ -258,8 +418,21 @@ class Package:
                 if f.id == "open": caps.add("file"); continue
                 if f.id in DYN_NAMES: flags.add(DYN_NAMES[f.id]); continue
                 if f.id in ("getattr", "setattr", "delattr"):
-                    if len(n.args) < 2 or not (isinstance(n.args[1], ast.Constant) and isinstance(n.args[1].value, str)):
+                    if ctx is None:
+                        fn = root if isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef)) else None
+                        static = fn is not None and any(isinstance(d, ast.Name) and d.id == "staticmethod" for d in fn.decorator_list)
+                        ctx = dict(binds=self._bindings(root), cls=cls.split(".")[-1] if cls else None,
+                                   first=fn.args.args[0].arg if fn is not None and fn.args.args and not static else None)
+                    names_ = self._names(n.args[1], ctx) if len(n.args) >= 2 else None
+                    if names_ is None:
                         flags.add("dyn-attr")
+                    elif f.id == "getattr":                   # like x.<name>(): every method of each name it can be
+                        for nm in sorted(names_):
+                            targets = self.by_method.get(nm, []); stats["cha"] += len(targets)
+                            edges.update(targets)
+                    else:                                     # a write by a fixed name is like x.<name> = v
+                        ch0 = dotted(n.args[0])
+                        if ch0 and ch0[0] in names and names[ch0[0]][0] in ("mod", "ext"): flags.add("dyn-patch")
                     continue
                 if f.id == "__import__":
                     self._dyn_import(first_const, edges, flags); continue

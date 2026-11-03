@@ -123,6 +123,158 @@ def test_unresolved_base_stays_conservative():
           "def f():\n    c = C()\n    c.append(1)\n"
     assert "m:f" in changed(Package({"m.py": src.format(o=1)}), Package({"m.py": src.format(o=2)}))
 
+# ---- getattr with a name from a fixed list ------------------------------------------------------------
+
+NETWORK_GO = "import socket\n\nclass K:\n    def go(self):\n        socket.socket()\n\n"
+
+def caps_of(src, node="m:f"):
+    return Package({"m.py": NETWORK_GO + src}).nodes[node]["caps"]
+
+def test_getattr_literal_is_a_call_by_name():
+    """getattr(k, "go")() runs K.go: the node reaches its scope instead of nothing."""
+    assert caps_of("def f(k):\n    return getattr(k, 'go')()\n") == {"network"}
+
+def test_getattr_over_literal_tuple_resolves():
+    assert caps_of("def f(k):\n    for n in ('go', 'stop'):\n        getattr(k, n)()\n") == {"network"}
+
+def test_getattr_over_comprehension_and_slice_resolves():
+    assert caps_of("def f(k):\n    return [getattr(k, n) for n in ('go', 'stop')[:1]]\n") == {"network"}
+
+def test_getattr_over_slots_resolves():
+    src = "class S:\n    __slots__ = ('go', 'x')\n\ndef f(obj):\n    return [getattr(obj, s) for s in obj.__slots__]\n"
+    assert caps_of(src) == {"network"}
+
+def test_getattr_over_dataclass_fields_resolves():
+    src = "from dataclasses import dataclass\n\n@dataclass\nclass D:\n    go: int\n\n" \
+          "def f(inst):\n    return {k: getattr(inst, k) for k in inst.__dataclass_fields__}\n"
+    assert caps_of(src) == {"network"}
+
+def test_getattr_over_class_tuple_resolves():
+    src = "class C:\n    _fields = ('go',)\n    def f(self):\n        return [getattr(self, x) for x in self._fields]\n"
+    assert caps_of(src, "m:C.f") == {"network"}
+
+def test_getattr_name_from_parameter_stays_top():
+    assert "TOP" in caps_of("def f(k, name):\n    return getattr(k, name)\n")
+
+def test_getattr_loop_name_rebound_stays_top():
+    assert "TOP" in caps_of("def f(k, x):\n    for n in ('a',):\n        n = x\n        getattr(k, n)\n")
+
+def test_getattr_list_changed_in_place_stays_top():
+    assert "TOP" in caps_of("def f(k, x):\n    names = ['a']\n    names.append(x)\n    for n in names:\n        getattr(k, n)\n")
+    assert "TOP" in caps_of("def f(k, x):\n    names = ['a']\n    names[0] = x\n    for n in names:\n        getattr(k, n)\n")
+
+def test_getattr_over_computed_collection_stays_top():
+    assert "TOP" in caps_of("def f(k, xs):\n    for n in tuple(xs):\n        getattr(k, n)\n")
+
+def test_class_list_written_elsewhere_stays_top():
+    src = "class C:\n    _fields = ('a',)\n    def f(self):\n        return [getattr(self, x) for x in self._fields]\n" \
+          "def g(c, v):\n    c._fields = v\n"
+    assert "TOP" in caps_of(src, "m:C.f")
+
+def test_computed_write_on_unknown_object_blocks_lists():
+    src = "class C:\n    _fields = ('a',)\n    def f(self):\n        return [getattr(self, x) for x in self._fields]\n" \
+          "def g(obj, k, v):\n    setattr(obj, k, v)\n"
+    assert "TOP" in caps_of(src, "m:C.f")
+
+def test_computed_write_through_class_blocks_its_family():
+    src = "class C:\n    _fields = ('a',)\n    def f(self):\n        return [getattr(self, x) for x in self._fields]\n" \
+          "    @classmethod\n    def set(cls, k, v):\n        setattr(cls, k, v)\n"
+    assert "TOP" in caps_of(src, "m:C.f")
+
+def test_computed_instance_write_with_dict_blocks_its_family():
+    """An instance with a __dict__ can shadow the class's list."""
+    src = "class C:\n    _fields = ('a',)\n    def f(self):\n        return [getattr(self, x) for x in self._fields]\n" \
+          "    def set(self, k, v):\n        setattr(self, k, v)\n"
+    assert "TOP" in caps_of(src, "m:C.f")
+
+def test_computed_instance_write_on_slotted_class_keeps_lists():
+    """A fully slotted instance has no __dict__: a write by any name cannot replace a class attribute."""
+    src = "class C:\n    __slots__ = ('go',)\n    _fields = ('go',)\n    def f(self):\n        return [getattr(self, x) for x in self._fields]\n" \
+          "    def set(self, k, v):\n        super().__setattr__(k, v)\n"
+    assert caps_of(src, "m:C.f") == {"network"}
+
+def test_computed_instance_write_in_unrelated_class_keeps_lists():
+    src = "class C:\n    _fields = ('go',)\n    def f(self):\n        return [getattr(self, x) for x in self._fields]\n" \
+          "class Other:\n    def set(self, k, v):\n        self.__setattr__(k, v)\n"
+    assert caps_of(src, "m:C.f") == {"network"}
+
+def test_getattr_name_changes_the_hash():
+    """The resolved names are edges, so a change to K.go changes f's Merkle hash."""
+    src = "def f(k):\n    for n in ('go',):\n        getattr(k, n)()\n"
+    a = Package({"m.py": NETWORK_GO + src})
+    b = Package({"m.py": NETWORK_GO.replace("socket.socket()", "socket.socket(2)") + src})
+    assert "m:f" in changed(a, b)
+
+# ---- implicit calls: the audit -----------------------------------------------------------------------
+# Python runs code that no call in the source names. Each case links f() to a socket only implicitly.
+# SEEN must reach the socket. KNOWN_GAPS are the cases Algobank misses today: the test fails when one of them
+# changes, so a fix (or a regression) is noticed and the list is updated on purpose.
+
+NET = "        socket.socket()\n"
+def dunder(name, args="self", ret="return self"):
+    return f"class K:\n    def {name}({args}):\n{NET}        {ret}\n"
+
+IMPLICIT = {
+    "explicit method call": dunder("go") + "def f(k):\n    return k.go()\n",
+    "K() runs __init__": dunder("__init__", ret="return None") + "def f():\n    return K()\n",
+    "raise E() runs __init__": "class E(Exception):\n    def __init__(self):\n" + NET + "def f():\n    raise E()\n",
+    "default argument at def time": "def g():\n" + NET[4:] + "def f():\n    def h(x=g()):\n        pass\n",
+    "a + b": dunder("__add__", "self, o") + "def f(a, b):\n    return a + b\n",
+    "a == b": dunder("__eq__", "self, o", "return True") + "def f(a, b):\n    return a == b\n",
+    "a < b": dunder("__lt__", "self, o", "return True") + "def f(a, b):\n    return a < b\n",
+    "-a": dunder("__neg__") + "def f(a):\n    return -a\n",
+    "a[k]": dunder("__getitem__", "self, k") + "def f(a):\n    return a[0]\n",
+    "a[k] = v": dunder("__setitem__", "self, k, v", "return None") + "def f(a):\n    a[0] = 1\n",
+    "x in a": dunder("__contains__", "self, x", "return True") + "def f(a):\n    return 1 in a\n",
+    "for x in a": dunder("__iter__", ret="return iter(())") + "def f(a):\n    for x in a:\n        pass\n",
+    "with a": dunder("__enter__") + "    def __exit__(self, *e):\n        return False\ndef f(a):\n    with a:\n        pass\n",
+    "if a": dunder("__bool__", ret="return True") + "def f(a):\n    if a:\n        return 1\n",
+    "len(a)": dunder("__len__", ret="return 0") + "def f(a):\n    return len(a)\n",
+    "str(a)": dunder("__str__", ret="return ''") + "def f(a):\n    return str(a)\n",
+    "f-string": dunder("__format__", "self, spec", "return ''") + "def f(a):\n    return f'{a}'\n",
+    "dict key (__hash__)": dunder("__hash__", ret="return 0") + "def f(a):\n    return {a: 1}\n",
+    "a()": dunder("__call__") + "def f(a):\n    return a()\n",
+    "await a": dunder("__await__", ret="return iter(())") + "async def f(a):\n    await a\n",
+    "del a.x": dunder("__delattr__", "self, n", "return None") + "def f(a):\n    del a.x\n",
+    "del a (__del__)": dunder("__del__", ret="return None") + "def f(a):\n    del a\n",
+    "property": "class K:\n    @property\n    def p(self):\n" + NET + "        return 1\ndef f(a):\n    return a.p\n",
+    "__getattr__": dunder("__getattr__", "self, n", "return 1") + "def f(a):\n    return a.missing\n",
+    "__getattribute__": dunder("__getattribute__", "self, n", "return 1") + "def f(a):\n    return a.x\n",
+    "__setattr__": dunder("__setattr__", "self, n, v", "return None") + "def f(a):\n    a.x = 1\n",
+    "descriptor __get__": "class D:\n    def __get__(self, o, t=None):\n" + NET + "        return 1\nclass K:\n    d = D()\ndef f(a):\n    return a.d\n",
+    "K() runs __new__": dunder("__new__", "c", "return object.__new__(c)") + "def f():\n    return K()\n",
+    "K() runs metaclass __call__": "class M(type):\n    def __call__(c, *a):\n" + NET + "        return 1\nclass K(metaclass=M):\n    pass\ndef f():\n    return K()\n",
+    "class statement runs __init_subclass__": "class K:\n    @classmethod\n    def __init_subclass__(c):\n" + NET + "def f():\n    class S(K):\n        pass\n",
+    "class statement runs metaclass __new__": "class M(type):\n    def __new__(m, n, b, d):\n" + NET + "        return type.__new__(m, n, b, d)\ndef f():\n    class S(metaclass=M):\n        pass\n",
+    "class statement runs __set_name__": "class D:\n    def __set_name__(self, o, n):\n" + NET + "def f():\n    class S:\n        d = D()\n",
+    "class decorator": "def deco(c):\n" + NET[4:] + "    return c\ndef f():\n    @deco\n    class S:\n        pass\n",
+    "function decorator": "def deco(fn):\n" + NET[4:] + "    return fn\ndef f():\n    @deco\n    def h():\n        pass\n",
+    "decorated function runs the wrapper": "def deco(fn):\n    def wrapper(*a):\n" + NET + "        return fn(*a)\n    return wrapper\n"
+                                           "@deco\ndef h():\n    return 1\ndef f():\n    return h()\n",
+    "callback passed as an argument": "def g():\n" + NET[4:] + "def run(cb):\n    return cb()\ndef f():\n    return run(g)\n",
+    "class attribute set to a function": "def g(self):\n" + NET[4:] + "class K:\n    go = g\ndef f(k):\n    return k.go()\n",
+}
+IMPLICIT_FILES = {"import inside a function": {"m.py": "def f():\n    import side\n", "side.py": "import socket\nsocket.socket()\n"}}
+
+KNOWN_GAPS = {
+    "a + b", "a == b", "a < b", "-a", "a[k]", "a[k] = v", "x in a", "for x in a", "with a", "if a", "len(a)", "str(a)",
+    "f-string", "dict key (__hash__)", "a()", "await a", "del a.x", "del a (__del__)", "property", "__getattr__",
+    "__getattribute__", "__setattr__", "descriptor __get__", "K() runs __new__", "K() runs metaclass __call__",
+    "class statement runs __init_subclass__", "class statement runs metaclass __new__", "class statement runs __set_name__",
+    "class decorator", "function decorator", "decorated function runs the wrapper", "callback passed as an argument",
+    "class attribute set to a function", "import inside a function",
+}
+
+def test_implicit_calls():
+    seen = set()
+    cases = {k: {"m.py": "import socket\n" + v} for k, v in IMPLICIT.items()} | IMPLICIT_FILES
+    for name, files in cases.items():
+        p = Package(files)
+        assert any("network" in n["direct_caps"] for n in p.nodes.values()), name      # the socket call itself is seen
+        caps = p.nodes["m:f"]["caps"]
+        if "network" in caps or "TOP" in caps: seen.add(name)
+    assert set(cases) - seen == KNOWN_GAPS, sorted((set(cases) - seen) ^ KNOWN_GAPS)
+
 def test_prefixes():
     """Leaves and interior nodes use different prefixes."""
     p = Package({"m.py": "def f():\n    return 1\n"})
