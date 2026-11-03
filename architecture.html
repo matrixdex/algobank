@@ -578,6 +578,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <p>Assumption: classes outside the package do not subclass classes of the package.</p>
 <h3>4.5 Compute and effect parts [spec]</h3>
 <p>Reviewers must examine the small parts that touch files, the network or processes. Pure compute parts need less review. Thus Algobank separates computation from effects.</p>
+<p><strong>An effect part is a whole package.</strong> A package is the unit that is algobanked, versioned and admitted. Thus a package is an effect part or a compute part as a whole. In a closure, only effect packages may touch files, the network, processes or the environment in their own code. Compute packages get these powers only by calling an effect package. The closure analysis (section 10.6) shows where each scope enters.</p>
 <ol>
 <li><strong>Two types of part.</strong></li>
 <li>A compute part declares no scope. It has no effectful imports. It has no <code class='top'>TOP</code>. It has no introspection. It has no clock. It has no randomness.</li>
@@ -1020,7 +1021,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <tbody>
 <tr>
 <td>Code root</td>
-<td><code>8d97cdd1bbe821851cbdd6c9d1f676091518d55a228ce77f78b779dc77bbe73b</code></td>
+<td><code>872073de7305976415596a9c1c28983cee4dd00d6a8dfe42c5f5316b050fada4</code></td>
 </tr>
 <tr>
 <td>Scope</td>
@@ -1036,7 +1037,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </tr>
 <tr>
 <td>File SHA-256</td>
-<td><code>b987724e477efb4ee270deaf8bdd1e39dd34219cc3c52b0a6fd57e33c1a578fd</code></td>
+<td><code>265803dce56352b54386c82d848c2cb7fac682e86b246274893b245b9bcd5386</code></td>
 </tr>
 <tr>
 <td>Python</td>
@@ -1249,7 +1250,7 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))&quot;
 <li>What can the package do now?</li>
 </ul>
 <pre><code>algobank diff OLD NEW [--json] [--ignore-native]
-algobank scope FILE [FILE ...] [--json] [--ignore-native]
+algobank scope FILE [FILE ...] [--closure] [--json] [--ignore-native]
 </code></pre>
 <p><code>OLD</code>, <code>NEW</code> and <code>FILE</code> are paths to wheel or sdist files. The tool reads each file in memory. It installs nothing from the package. It imports nothing from the package. It runs nothing from the package.</p>
 <p><strong>Scope of the tool.</strong> Algobank has no network access. It writes no files. Its only power is to read the files that it gets. The package manager downloads the files. The package manager has network access wherever packages can be installed:</p>
@@ -1312,6 +1313,16 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 <li>A warning never changes the exit status.</li>
 </ul>
 <p>To algobank a full closure in one run, give <code>scope</code> each file of the closure. <code>pip download</code> without <code>--no-deps</code> gives the closure.</p>
+<p><strong>One graph for a closure.</strong> With <code>--closure</code>, Algobank also analyzes all the wheels as one graph. Then a call from one package into another follows the code of the other package. The closure report gives:</p>
+<ul>
+<li>one code root for the closure;</li>
+<li>the scope of the closure, and the scope of each package in it, through the code of the others;</li>
+<li>for each scope, the packages whose own code uses it directly ("where each scope enters");</li>
+<li>a called package that is not in the closure, as a <code>warning</code>;</li>
+<li>a file that two wheels ship with different code, as <code>high</code>, because the order of installation decides which one runs.</li>
+</ul>
+<p>Sdists stay outside the graph. For a call into a package that the scope table names (<code>requests</code> gives <code>network</code>), the table also applies. Thus a closure that misses part of that package's dependencies never reports less than a scan of one package.</p>
+<p><strong>What a closure shows about precision.</strong> Measured on the website closure: dexweb and the 7 packages it calls, 5,275 nodes, 47 seconds. Every package reaches <code class='top'>TOP</code>, <code>env</code>, <code>file</code>, <code>network</code> and <code>process</code>, soupsieve too. Algobank does not know types. Thus a call on an object may reach any method of that name in the closure. dexweb calls all of these packages, so it could pass an object from one into another. Two traced paths: a soupsieve call reaches mammoth's <code>ImageWriter.__call__</code> and then <code>Files.open</code> (<code>network</code>). A soupsieve attribute read reaches the forwarding <code>__getattr__</code> of importlib_resources (<code class='top'>TOP</code>). A rewrite of four constructs keeps <code>network</code> in mammoth, its source: <code>ImageWriter.__call__</code> as a plain method, <code>Files.open</code> with a unique name, and the two forwarding <code>__getattr__</code> methods. Thus the precision of a closure depends on how its code is written: no effects in special methods, unique names for effect functions, no <code class='top'>TOP</code> (section 4.5).</p>
 <p>The severities, from the top, are <code>high</code>, <code>warning</code>, <code>medium</code>, <code>low</code> and <code>info</code>.</p>
 <p>In <code>diff</code>, a new dependency stays high. A release that changes what it pulls in is a change to review. This is true if the dependency is algobanked or not.</p>
 <p><strong>Native binaries.</strong> Algobank analyzes Python source. It cannot see what compiled code does.</p>
@@ -1574,7 +1585,7 @@ python3.14 -I v0.1/proofs/check_model.py
 </tr>
 </tbody>
 </table>
-<p>One <code>algobank scope</code> run checks the full dexweb closure. The website is built only from those files (<code>pip install --no-index --find-links</code>). Algobank needs none of these packages at run time. It uses the standard library only.</p>
+<p>One <code>algobank scope --closure</code> run checks the full dexweb closure, file by file and as one graph. The website is built only from those files (<code>pip install --no-index --find-links</code>). Algobank needs none of these packages at run time. It uses the standard library only.</p>
 <h2>11. Known limitations</h2>
 <table>
 <thead>
