@@ -530,21 +530,32 @@ document.addEventListener("DOMContentLoaded", () => {
 </tbody>
 </table>
 <p>Algobank resolves an import of a package module with a literal name as a normal import.</p>
+<p><strong>Values and names that carry power.</strong> A capability does not need a call to travel:</p>
+<ul>
+<li>A module or function used as a value (passed, stored or returned) brings its effects to the node that uses it. <code>run(subprocess)</code> gives <code>process</code>. <code>os</code> as a value gives <code>env</code>, <code>file</code> and <code>process</code>. <code>importlib</code>, <code>builtins</code>, <code>sys</code>, <code>inspect</code>, <code>operator</code>, <code>gc</code> and <code>types</code> as values give <code class='top'>TOP</code>. A module passed to <code>hasattr</code>, <code>isinstance</code>, <code>type</code> and similar only inspects it, and brings nothing.</li>
+<li>An import of an outside module with a literal name (<code>import_module("subprocess")</code>, <code>__import__("os")</code>) brings that module's effects.</li>
+<li><code>builtins.exec</code> and the other builtins reached through <code>builtins</code>, <code>__builtins__</code>, or a builtin used as a value (<code>g = getattr</code>) give <code class='top'>TOP</code>.</li>
+<li>Escape attributes give <code class='top'>TOP</code> wherever they appear: <code>__subclasses__</code>, <code>__globals__</code>, <code>__builtins__</code>, <code>__code__</code>, frames (<code>_getframe</code>, <code>f_globals</code>, <code>f_locals</code>, <code>f_back</code>, <code>inspect.stack</code>).</li>
+<li><code>x.__setattr__(name, v)</code>, <code>object.__setattr__(x, name, v)</code> and <code>__getattribute__</code> calls with a computed name are like <code>setattr</code> and <code>getattr</code>: <code class='top'>TOP</code>.</li>
+</ul>
 <p><code class='top'>TOP</code> goes to each caller. A <code class='top'>TOP</code> node cannot get a result such as "uses no network". It can get only results that are true for all of its possible behaviors.</p>
 <p><strong>Names from fixed lists.</strong> Algobank resolves <code>getattr(x, name)</code> when the code fixes every value of <code>name</code>:</p>
 <ul>
 <li>a string literal;</li>
-<li>a loop or comprehension over a literal tuple, list or set of strings, or over a slice of one;</li>
-<li>one element of such a list, such as <code>keys[i]</code>;</li>
-<li>a loop over a list that the package fixes on its classes: <code>__slots__</code>, the fields of a dataclass, or a class-level tuple of strings.</li>
+<li>a loop or comprehension directly over a literal tuple, list or set of strings, or over a slice of one;</li>
+<li>a local name assigned a literal tuple, and one element of it, such as <code>keys[i]</code>;</li>
+<li>a loop over a tuple that the package fixes on its classes: <code>__slots__</code>, the fields of a dataclass, or a class-level tuple of strings.</li>
 </ul>
-<p>The name must have no other binding in the function. A local list must not change in place. Then <code>getattr(x, name)</code> is like the call <code>x.name()</code> for each possible name: it gets an edge to each method with that name. A <code>setattr</code> or <code>delattr</code> by such a name is like a plain write.</p>
-<p>A class-level list counts only if no code in the package can change it:</p>
+<p>The name must have no other binding in the function. A local list or set is not accepted, because a call could change it through an alias. Strings and tuples cannot change.</p>
+<p><strong>A resolved name is never weaker than the same name written by hand.</strong> For each possible name, <code>getattr(x, name)</code> gets an edge to each method with that name, and every table entry for that name applies: <code>system</code> gives <code>process</code>, <code>write_text</code> gives <code>file</code>, <code>exec</code> and <code>loads</code> give <code class='top'>TOP</code>. If <code>x</code> is an outside module, the effects of that module's attribute apply. Escape names (<code>__subclasses__</code>, <code>__globals__</code>, frames) and names that give write access (<code>__dict__</code>, <code>__setattr__</code>, <code>__delattr__</code>, <code>__getattribute__</code>, <code>__getattr__</code>) stay <code class='top'>TOP</code>. <code>operator.attrgetter</code>, <code>operator.methodcaller</code> and <code>inspect.getattr_static</code> follow the same rules. A <code>setattr</code> or <code>delattr</code> by a fixed name is like a plain write.</p>
+<p><strong>A list read from a class counts only if nothing can change it at run time.</strong></p>
 <ul>
-<li>no other write goes to an attribute with that name;</li>
-<li>no write with a computed name goes through a class of the same family (a base or a subclass);</li>
-<li>no write with a computed name goes through an instance of such a class, unless each class in the family uses <code>__slots__</code>. An instance without a <code>__dict__</code> cannot hide a class attribute;</li>
-<li>no write with a computed name goes through any other object.</li>
+<li>It must be a tuple.</li>
+<li>No other code writes an attribute with that name. No method or property has that name.</li>
+<li>No code writes an item of it, keeps an alias of the dataclass fields, calls <code>make_dataclass</code>, or applies <code>dataclass</code> at run time.</li>
+<li>No code assigns <code>__class__</code>, <code>__bases__</code> or <code>__dict__</code>, keeps an alias of a <code>__dict__</code>, makes a class with <code>type()</code>, or defines <code>__getattribute__</code>.</li>
+<li>No write with a computed name goes through a class of the same family, or through an instance of it that has a <code>__dict__</code>. A write through an instance of a fully slotted family can only set its slots.</li>
+<li>Nothing else in the package is dynamic: no <code>exec</code>, <code>eval</code>, deserialization, computed import, computed attribute access or patching. Algobank analyzes the package once with the lists. If any such node remains, it analyzes the package again without them.</li>
 </ul>
 <p>Assumption: classes outside the package do not subclass classes of the package.</p>
 <h3>4.5 Compute and effect parts [spec]</h3>
@@ -991,7 +1002,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <tbody>
 <tr>
 <td>Code root</td>
-<td><code>ff6bf50fdfcfa74914c3eaa4b2133a4f667c437bdd2e28848b1131c48f69abca</code></td>
+<td><code>5431f71c4f14366f6961accceed5295799401a0d5729b0226a240995d4ec41bc</code></td>
 </tr>
 <tr>
 <td>Scope</td>
@@ -1003,11 +1014,11 @@ document.addEventListener("DOMContentLoaded", () => {
 </tr>
 <tr>
 <td>Nodes</td>
-<td>54</td>
+<td>61</td>
 </tr>
 <tr>
 <td>File SHA-256</td>
-<td><code>21d8916046a3c3bac50449eb74522ed7668cb1b2128c3b89a73225c80bbe8adb</code></td>
+<td><code>eaba3e789f22e095fd23ec84a5d8593d92319a9151fb00594a7078d34517b560</code></td>
 </tr>
 <tr>
 <td>Python</td>
@@ -1092,22 +1103,23 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))&quot;
 </tbody>
 </table>
 <p>The dexweb numbers come from one small package with one author. Do not make general conclusions from them.</p>
-<p><strong>Names from fixed lists</strong> (<code>test_pkgmerkle.py</code>). Measured on the nine dependencies in the bank, before and after the rule:</p>
+<p><strong>Names from fixed lists</strong> (<code>test_pkgmerkle.py</code>). Measured on the nine dependencies in the bank, against algobank 1.0.2:</p>
 <ul>
-<li>nodes with dynamic code: 33 before, 27 after;</li>
-<li>nodes that reach <code class='top'>TOP</code>: 657 before, 591 after;</li>
+<li>nodes with dynamic code: 33 before, 35 after;</li>
+<li>nodes that reach <code class='top'>TOP</code>: 657 before, 632 after;</li>
 <li>soupsieve: 62 nodes reach <code class='top'>TOP</code> before, 0 after;</li>
 <li>nodes that get a new concrete scope: 0.</li>
 </ul>
-<p>The resolved nodes are <code>Tag.copy_self</code> (beautifulsoup4), <code>Color.as_operator</code> (pypdf), and <code>_SelectorContext.debug</code>, <code>Immutable.__eq__</code>, <code>Immutable.__repr__</code> and <code>_pickle</code> (soupsieve). The other nodes take names from data, forward attributes, or run in a class family with computed writes. They keep <code class='top'>TOP</code>. Escape tests keep <code class='top'>TOP</code> for a rebound name, a list changed in place, a computed collection, a list written elsewhere, and computed writes through a class, an instance with a <code>__dict__</code> or another object.</p>
+<p>Resolved: <code>Tag.copy_self</code> (beautifulsoup4), and <code>_SelectorContext.debug</code>, <code>Immutable.__eq__</code>, <code>Immutable.__repr__</code> and <code>_pickle</code> (soupsieve). pypdf's <code>Color.as_operator</code> reads a class tuple, but pypdf has other dynamic code, so it keeps <code class='top'>TOP</code>. The new detections found 7 nodes that algobank 1.0.2 missed: frames and <code>inspect.stack</code> in beautifulsoup4, importlib_resources and typing_extensions, <code>__subclasses__</code> in cobble, and a <code>__getattribute__</code> that reads by a computed name in pypdf.</p>
+<p><strong>Attacks</strong> (<code>test_pkgmerkle.py</code>). 34 attacks try to hide a power behind a name. They include a fixed list over <code>os</code>, a module or function passed as a value, a literal import of <code>subprocess</code>, <code>builtins.exec</code>, <code>getattr</code> under another name, escape names, <code>sys.modules</code> through <code>getattr</code>, list aliases, and nine ways to rewrite a class list at run time. Each one shows the power or <code class='top'>TOP</code>. With the second analysis removed, the <code>exec</code> attack gets through. With lists allowed at class level, the list attack gets through. Thus the tests check the defenses.</p>
 <p><strong>Implicit calls</strong> (<code>test_pkgmerkle.py</code>). Python runs some code that no call in the source names. 38 cases test this. Each case links a function to a socket only through one such mechanism. 4 cases are linked: the explicit method call that checks the test itself, a constructor that runs <code>__init__</code>, <code>raise E()</code>, and a default argument. 34 cases are not linked yet: operators, protocols such as <code>for</code>, <code>with</code> and <code>len</code>, properties and descriptors, <code>__getattr__</code> and <code>__setattr__</code>, <code>__new__</code> and metaclasses, class creation, decorators, functions passed as values, and imports inside functions. In each case the scope of the package is correct, because the target node has the scope. The scope of the calling node is too small, and its Merkle hash does not follow the target. The test lists these 34 cases by name. It fails when one of them changes.</p>
 <p><strong>Self-analysis.</strong> Algobank analyzed <code>pkgmerkle.py</code> alone:</p>
 <ul>
-<li>It has 54 nodes.</li>
+<li>It has 61 nodes.</li>
 <li>It has no scope.</li>
 <li>It has no <code class='top'>TOP</code>.</li>
 <li>Repeated runs give the same hashes.</li>
-<li>A one-line change to <code>H()</code> changes <code>H</code>. It also changes the 8 nodes that call <code>H</code> directly or indirectly. The other 45 nodes keep their hashes.</li>
+<li>A one-line change to <code>H()</code> changes <code>H</code>. It also changes the 8 nodes that call <code>H</code> directly or indirectly. The other 52 nodes keep their hashes.</li>
 </ul>
 <h3>10.4 Proof of the code root</h3>
 <p><code>v0.1/proofs/CodeRoot.v</code> models <code>Package.leaves()</code> and <code>Package.root()</code> in Coq 8.18. It proves these theorems:</p>
