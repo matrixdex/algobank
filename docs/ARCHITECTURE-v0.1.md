@@ -977,10 +977,21 @@ python3.14 -I v0.1/proofs/check_model.py
 
 ### 10.8 Release
 
-`uv build` (or `python -m build`) makes two files:
+A release is built from a commit, in a fresh environment:
+
+```
+pip install --require-hashes -r build-requirements.txt
+python v0.1/release.py
+```
+
+It makes two files:
 
 - `dist/algobank-1.0.3-py3-none-any.whl`
 - `dist/algobank-1.0.3.tar.gz`
+
+**The build backend is pinned.** `pyproject.toml` requires exactly `flit_core` 3.12.0. `build-requirements.txt` pins it to the file that is admitted to the bank, by its SHA-256. pip refuses any other file.
+
+**The build is reproducible.** `release.py` takes all file times from the commit (`SOURCE_DATE_EPOCH`). flit_core sets the file permissions and owners. Thus a build of the same commit gives the same SHA-256 on any machine. Two clones at different paths, with different umasks, gave identical files. `release.py` refuses a working tree with uncommitted changes, and any other build backend. After an upload, anyone can build the commit again and compare the files with the files on PyPI.
 
 Both files contain only the `algobank` package, `LICENSE`, `README.md` and metadata. They do not contain tests, proofs, documents or `CLAUDE.md`. `twine check dist/*` passes.
 
@@ -998,11 +1009,12 @@ The repository is the full company. Each branch has one role:
 
 Each website is a dex. dexweb builds it. `python run.py` in `site/` writes the website to `site/gen/`. dexweb publishes it to `web`.
 
-**The index is the bank.** Its title is "algobank Algorithm Bank". At each build, `run.py` renders `bank.jsonl` from `live` into the index template in `site/config.json`. It also checks the bank. It downloads each banked file with pip. It checks the SHA-256 of each file against its record. It runs, for each record, the version of Algobank that the record names (`algobanked_by`), in its own Python process. That version is itself in the bank: its PyPI file or its source commit. It checks the code root against the record. A record without a file is computed from the source commit that it names. Any difference stops the build. The index has these items:
+**The index is the bank.** Its title is "algobank Algorithm Bank". At each build, `run.py` renders `bank.jsonl` from `live` into the index template in `site/config.json`. It also checks the bank. It checks that `live` only grows: each commit keeps every earlier line of `bank.jsonl`, unchanged, and every earlier record of `known.json`. A commit that removes or changes one stops the build. It downloads each banked file with pip. It checks the SHA-256 of each file against its record. It runs, for each record, the version of Algobank that the record names (`algobanked_by`), in its own Python process. That version is itself in the bank: its PyPI file or its source commit. It checks the code root against the record. A record without a file is computed from the source commit that it names. Any difference stops the build. The index has these items:
 
 - Five lines that say what Algobank is. They are plain text in the page, for people and for agents. One line shows at a time, for 4 seconds. A pointer on the line stops the motion. With reduced motion set, all five lines show and nothing moves.
 - A search bar. It takes `package` or `package v1.2.3`. A link can carry `?q=`.
 - A message for a version that is not in the bank: `package v1.2.3 are not algobanked`. The admitted versions of the package show below it.
+- A rejected version shows "rejected" and the date in red, and its reason in the details. A rejection is a line with `rejected` and `reason` that names the version by the hashes of its admission. The admission line stays: lines are never removed. A record made by a rejected version of Algobank carries a note to algobank it again.
 - The records as a table. The newest admitted record comes first. On wide screens (1,045 pixels and wider), each field has its own column. On narrower screens, the table shows the package and its findings. A click on an entry opens all of its fields below it.
 - The SHA-256 of each file. The page holds the full hash. The table shows its first eight characters. On narrow screens, the details show as much as fits. A button copies the full hash.
 - The code root of each version as a strip. Each slice is one node, in a fixed order, sized by its code. Dark: the node reaches nothing. Grey: it reaches files. Red: it reaches the network, processes, the environment, native code or `TOP`. Yellow: its own code changed since the previous banked version of the package. The other nodes of that version are dimmed. The label of the strip holds the full code root and a summary. In the details, a button copies the full code root.

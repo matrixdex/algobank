@@ -10,6 +10,35 @@ subprocess.run(["git", "fetch", "-q", "origin", "live"], check=True)
 bank = subprocess.run(["git", "show", "origin/live:bank.jsonl"], capture_output=True, text=True, check=True).stdout
 records = [json.loads(line) for line in bank.splitlines() if line.strip()]
 
+# THE BANK ONLY GROWS: each commit of live keeps every earlier line of bank.jsonl, unchanged, and every earlier
+# record of known.json. A commit that removes or changes one stops the build.
+def history(path):
+    return subprocess.run(["git", "rev-list", "--reverse", "origin/live", "--", path], capture_output=True, text=True, check=True).stdout.split()
+def at(commit, path):
+    return subprocess.run(["git", "show", f"{commit}:{path}"], capture_output=True, text=True, check=True).stdout
+before = ""
+for c in history("bank.jsonl"):
+    now = at(c, "bank.jsonl")
+    if not now.startswith(before): raise SystemExit(f"live {c}: bank.jsonl changed or removed a line; it may only gain lines")
+    before = now
+seen = set()
+for c in history("known.json"):
+    ids = {e["id"] for e in json.loads(at(c, "known.json"))["advisories"]}
+    if not seen <= ids: raise SystemExit(f"live {c}: known.json dropped {sorted(seen - ids)}; a catch is kept forever")
+    seen = ids
+
+# REJECTIONS: a line with "rejected" marks one exact version as not secure, for good (a catch is kept forever).
+# It names the version by the hashes of its admission. The admission line stays: lines are never removed.
+rejected = {}
+for r in [r for r in records if "rejected" in r]:
+    adm = [x for x in records if "rejected" not in x and (x["name"], x["version"]) == (r["name"], r["version"])]
+    if not adm:
+        raise SystemExit(f"bank.jsonl: {r['name']} {r['version']} is rejected but was never admitted")
+    if any(r.get(k) and adm[0].get(k) and r[k] != adm[0][k] for k in ("sha256", "code_root")):
+        raise SystemExit(f"bank.jsonl: the rejection of {r['name']} {r['version']} names other hashes than its admission")
+    rejected[(r["name"], r["version"])] = r
+records = [r for r in records if "rejected" not in r]       # the admissions; a rejection marks one of them
+
 # THE CODE ROOT AS A STRIP: every banked version is analyzed again at each build. A code root is defined by the
 # version of Algobank that computed it, so each record is checked by the algobank its record names (algobanked_by),
 # run alone in its own Python. That algobank must itself be in the bank.
@@ -120,11 +149,21 @@ def findings(f, keys=("high", "warning")):
     return " ".join(f"<span class='{colors.get(k, '') if f[k] else ''}'>{f[k]} {k}</span>" for k in keys)
 def count(f, k):                                            # one finding count, colored when it is not zero
     return f"<span class='{k if f[k] else ''}'>{f[k]}</span>"
+def status(r):                                              # admitted, or rejected for good
+    x = rejected.get((r["name"], r["version"]))
+    return f"<span class='high'>rejected {esc(x['rejected'])}</span>" if x else esc(r["admitted"])
+def by_rejected(r):                                         # a record made by a version of algobank that is rejected
+    m = re.match(r"algobank (\S+)", r.get("algobanked_by", ""))
+    return bool(m) and ("algobank", m.group(1)) in rejected
 def details(r):                                             # every field of the record, in the order of the file
-    rows = [("version", esc(r["version"])), ("admitted", esc(r["admitted"])), ("scope", scope(r)),
+    x = rejected.get((r["name"], r["version"]))
+    rows = [("version", esc(r["version"])), ("admitted", esc(r["admitted"]))]
+    if x: rows += [("rejected", f"<span class='high'>{esc(x['rejected'])}</span>"), ("reason", esc(x["reason"]))]
+    rows += [("scope", scope(r)),
             ("findings", findings(r["findings"], ("high", "warning", "medium", "low", "info")))]
     rows += [(k.replace("_", " "), short(r[k]) if k == "sha256" else strip(r) + copy(r[k]) if k == "code_root" else text(r[k]))
              for k in ("file", "sha256", "code_root", "nodes", "source", "used_for", "algobanked_by") if k in r]
+    if by_rejected(r): rows.append(("note", "<span class='warning'>algobanked by a rejected version of algobank: algobank it again</span>"))
     return "<dl>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows) + "</dl>"
 rows = "".join(                                             # one tbody per record: the entry, and its details below it
     f"<tbody data-name='{esc(r['name'])}' data-version='{esc(r['version'])}'>"
@@ -133,8 +172,8 @@ rows = "".join(                                             # one tbody per reco
     f"<td class='wide'>{esc(r['version'])}</td><td class='wide'>{scope(r)}</td>"
     f"<td class='wide'>{count(r['findings'], 'high')}</td>"
     f"<td class='wide'>{count(r['findings'], 'warning')}</td>"
-    f"<td class='wide'>{esc(r['admitted'])}</td><td class='wide'>{short(r['sha256']) if r.get('sha256') else ''}</td>"
-    f"<td class='wide'>{strip(r)}</td><td class='narrow'>{findings(r['findings'])}</td></tr>"
+    f"<td class='wide'>{status(r)}</td><td class='wide'>{short(r['sha256']) if r.get('sha256') else ''}</td>"
+    f"<td class='wide'>{strip(r)}</td><td class='narrow'>{findings(r['findings']) if (r['name'], r['version']) not in rejected else status(r)}</td></tr>"
     f"<tr class='details' hidden><td colspan='10'>{details(r)}</td></tr></tbody>"
     for _, r in sorted(enumerate(records), key=lambda x: (x[1]["admitted"], x[0]), reverse=True))  # newest admitted first; same day: last added first
 page = (
@@ -158,7 +197,8 @@ from algobank.diff import norm, vkey                        # Algobank's own nam
 known = json.loads(subprocess.run(["git", "show", "origin/live:known.json"], capture_output=True, text=True, check=True).stdout)
 admitted = {}
 for r in records:
-    admitted.setdefault(norm(r["name"]), []).append(r["version"])
+    if (r["name"], r["version"]) not in rejected:              # a rejected version is not admitted
+        admitted.setdefault(norm(r["name"]), []).append(r["version"])
 def first_line(e):                                          # the record's own words: its summary, or its details' first sentence
     t = (e.get("summary") or e.get("details", "")).strip().split("\n")[0]
     t = re.split(r"(?<=[.!?])\s", t, maxsplit=1)[0]
