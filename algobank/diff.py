@@ -25,7 +25,7 @@ Exit status: 0 no high-severity findings, 1 high-severity findings, 2 error.
 """
 import argparse, ast, hashlib, io, json, os, re, sys, tarfile, zipfile
 
-from .pkgmerkle import Package, TOP
+from .pkgmerkle import Package, TOP, modname_of
 
 MAX_FILE = 50 * 2**20          # skip larger members
 MAX_TOTAL = 500 * 2**20        # stop reading an archive beyond this much uncompressed data
@@ -251,7 +251,52 @@ def analyze(art):
              if not p.endswith(".py") and p not in natives and ".dist-info/" not in p}
     return dict(art=art, pkg=pkg, deps=deps, hooks=hooks(members), entry_points=entry_points(members),
                 natives=natives, other=other, unparsed=unparsed, notes=notes, is_wheel=is_wheel,
-                digests=digests, release=release(members))
+                digests=digests, release=release(members), sources=sources)
+
+def closure_report(arts):
+    """Every wheel's code in one graph: calls into a dependency follow its code. Sdists stay outside."""
+    sources, owner, f = {}, {}, []
+    for a in arts:
+        if not a["is_wheel"]: continue
+        for path, src in sorted(a["sources"].items()):
+            m = re.match(r"[^/]+\.data/(?:purelib|platlib)/(.+)$", path)
+            key = m.group(1) if m else path
+            if key in sources and sources[key] != src:
+                f.append(finding("high", "conflict", f"{key} is in {owner[key]} and in {a['art'].filename}: "
+                                 "which one Python runs depends on the order of installation"))
+                continue
+            sources[key], owner[key] = src, a["art"].filename
+    inside = {a["release"][0] for a in arts if a["release"] and a["is_wheel"]}
+    pins = {}
+    for a in arts:
+        for d, spec in a["deps"].items():
+            if norm(d) not in inside: pins.setdefault(d.lower(), set()).add(spec)
+    pkg = Package(sources, {d: "; ".join(sorted(v)) for d, v in pins.items()})
+    mod_owner = {modname_of(p): o for p, o in owner.items()}
+    byart = {}
+    for nid, n in pkg.nodes.items():
+        byart.setdefault(mod_owner.get(nid.split(":", 1)[0], "?"), []).append(n)
+    natives = {a["art"].filename for a in arts if a["natives"]}
+    packages = [dict(artifact=a["art"].filename, sha256=a["art"].sha256,
+                     scope=sorted(set().union(*[n["caps"] for n in byart.get(a["art"].filename, [])]) | ({"native"} if a["art"].filename in natives else set())))
+                for a in arts if a["is_wheel"]]
+    enters = {}                                               # where each scope enters: the packages whose own code uses it
+    for nid, n in pkg.nodes.items():
+        for c in n["direct_caps"] | ({"TOP"} if n["direct_flags"] & {"dyn-import", "dyn-attr", "dyn-exec", "dyn-patch"} else set()):
+            enters.setdefault(c, set()).add(mod_owner.get(nid.split(":", 1)[0], "?"))
+    for a in arts:
+        if a["natives"]: enters.setdefault("native", set()).add(a["art"].filename)
+    for a in arts:
+        if not a["is_wheel"]:
+            f.append(finding("high", "sdist", f"{a['art'].filename} is not in the closure graph: " + SDIST_TEXT))
+    outside = sorted({d for a in arts for d in a["deps"] if norm(d) not in inside})
+    for d in outside:
+        f.append(finding("warning", "not algobanked", f"{d} is called but not in this closure: its code is not followed; run algobank on it too"))
+    scope = sorted(set(pkg.scope()) | ({"native"} if natives else set()))
+    return dict(closure=[a["art"].filename for a in arts], code_root=pkg.root(), nodes=len(pkg.nodes), scope=scope,
+                packages=packages, enters={k: sorted(v) for k, v in sorted(enters.items())}, findings=f,
+                coverage=["one graph: calls between these packages follow their code; "
+                          "for a call into a package named in the scope table, that table also applies"])
 
 # ---- reporting ----------------------------------------------------------------
 
@@ -406,6 +451,18 @@ def print_diff(r):
         print("findings: none")
     for c in r["coverage"]: print(f"  note: {c}")
 
+def print_closure(r):
+    print(f"closure of {len(r['closure'])} files  ({r['nodes']} nodes)")
+    print(f"  scope: {', '.join(r['scope']) or 'none'}")
+    for p in r["packages"]:
+        print(f"    {p['artifact']}: {', '.join(p['scope']) or 'none'}")
+    if r["enters"]:
+        print("  where each scope enters (the packages whose own code uses it):")
+        for c, arts in r["enters"].items(): print(f"    {c}: {', '.join(arts)}")
+    if r["findings"]:
+        print("findings:"); show_findings(r["findings"])
+    for c in r["coverage"]: print(f"  note: {c}")
+
 def print_scope(r):
     print(f"{r['artifact'] or r['sha256']}  ({r['nodes']} nodes)")
     print(f"  scope: {', '.join(r['scope']) or 'none'}")
@@ -422,6 +479,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("diff"); d.add_argument("old"); d.add_argument("new")
     s = sub.add_parser("scope"); s.add_argument("files", nargs="+", metavar="file")
+    s.add_argument("--closure", action="store_true", help="also analyze all the files as one graph: calls between them follow their code")
     for x in (d, s):
         x.add_argument("--json", action="store_true")
         x.add_argument("--ignore-native", action="store_true",
@@ -436,12 +494,13 @@ def main(argv=None):
             arts = [analyze(load(f)) for f in args.files]
             algobanked = {a["release"][0] for a in arts if a["release"]}
             reports = [with_called(with_known(scope_report(a), a), a, algobanked) for a in arts]
+            if args.closure: reports.append(closure_report(arts))
         for r in reports:
             for x in r["findings"]:
                 if args.ignore_native and x["kind"] == "native": x["ignored"] = True
         if args.json: print(json.dumps(reports[0] if len(reports) == 1 else reports, indent=2))
         else:
-            for r in reports: print_diff(r) if args.cmd == "diff" else print_scope(r)
+            for r in reports: print_diff(r) if args.cmd == "diff" else print_closure(r) if "closure" in r else print_scope(r)
     except SystemExit as e:
         if isinstance(e.code, str):
             print(e.code, file=sys.stderr); return 2

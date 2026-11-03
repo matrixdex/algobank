@@ -346,6 +346,8 @@ Assumption: classes outside the package do not subclass classes of the package.
 
 Reviewers must examine the small parts that touch files, the network or processes. Pure compute parts need less review. Thus Algobank separates computation from effects.
 
+**An effect part is a whole package.** A package is the unit that is algobanked, versioned and admitted. Thus a package is an effect part or a compute part as a whole. In a closure, only effect packages may touch files, the network, processes or the environment in their own code. Compute packages get these powers only by calling an effect package. The closure analysis (section 10.6) shows where each scope enters.
+
 1. **Two types of part.**
    - A compute part declares no scope. It has no effectful imports. It has no `TOP`. It has no introspection. It has no clock. It has no randomness.
    - An effect part declares narrow scopes with parameters. Examples: `file: read ./data` and `network: api.example.com:443`. Effect parts must be small.
@@ -661,11 +663,11 @@ Its code root is its identity. It is a candidate part. No log exists yet to admi
 
 | Item | Value |
 |---|---|
-| Code root | `8d97cdd1bbe821851cbdd6c9d1f676091518d55a228ce77f78b779dc77bbe73b` |
+| Code root | `872073de7305976415596a9c1c28983cee4dd00d6a8dfe42c5f5316b050fada4` |
 | Scope | none |
 | Scope root | `140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe` |
 | Nodes | 74 |
-| File SHA-256 | `b987724e477efb4ee270deaf8bdd1e39dd34219cc3c52b0a6fd57e33c1a578fd` |
+| File SHA-256 | `265803dce56352b54386c82d848c2cb7fac682e86b246274893b245b9bcd5386` |
 | Python | 3.14 |
 
 To compute these values again:
@@ -800,7 +802,7 @@ The diff tool is the first product on the core. Its command is `algobank`. A dev
 
 ```
 algobank diff OLD NEW [--json] [--ignore-native]
-algobank scope FILE [FILE ...] [--json] [--ignore-native]
+algobank scope FILE [FILE ...] [--closure] [--json] [--ignore-native]
 ```
 
 `OLD`, `NEW` and `FILE` are paths to wheel or sdist files. The tool reads each file in memory. It installs nothing from the package. It imports nothing from the package. It runs nothing from the package.
@@ -836,6 +838,18 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 - A warning never changes the exit status.
 
 To algobank a full closure in one run, give `scope` each file of the closure. `pip download` without `--no-deps` gives the closure.
+
+**One graph for a closure.** With `--closure`, Algobank also analyzes all the wheels as one graph. Then a call from one package into another follows the code of the other package. The closure report gives:
+
+- one code root for the closure;
+- the scope of the closure, and the scope of each package in it, through the code of the others;
+- for each scope, the packages whose own code uses it directly ("where each scope enters");
+- a called package that is not in the closure, as a `warning`;
+- a file that two wheels ship with different code, as `high`, because the order of installation decides which one runs.
+
+Sdists stay outside the graph. For a call into a package that the scope table names (`requests` gives `network`), the table also applies. Thus a closure that misses part of that package's dependencies never reports less than a scan of one package.
+
+**What a closure shows about precision.** Measured on the website closure: dexweb and the 7 packages it calls, 5,275 nodes, 47 seconds. Every package reaches `TOP`, `env`, `file`, `network` and `process`, soupsieve too. Algobank does not know types. Thus a call on an object may reach any method of that name in the closure. dexweb calls all of these packages, so it could pass an object from one into another. Two traced paths: a soupsieve call reaches mammoth's `ImageWriter.__call__` and then `Files.open` (`network`). A soupsieve attribute read reaches the forwarding `__getattr__` of importlib_resources (`TOP`). A rewrite of four constructs keeps `network` in mammoth, its source: `ImageWriter.__call__` as a plain method, `Files.open` with a unique name, and the two forwarding `__getattr__` methods. Thus the precision of a closure depends on how its code is written: no effects in special methods, unique names for effect functions, no `TOP` (section 4.5).
 
 The severities, from the top, are `high`, `warning`, `medium`, `low` and `info`.
 
@@ -1016,7 +1030,7 @@ A short script in `config.json` (`index_javascript`) does the search and the exp
 | `dexweb` 4.2.5 | It builds the website. | `file`, `process` | no high |
 | `beautifulsoup4` 4.15.0, `cobble` 0.1.4, `importlib_resources` 7.1.0, `mammoth` 1.13.0, `pypdf` 6.21.2, `soupsieve` 3.0.4, `typing_extensions` 4.16.0 | The packages that dexweb calls | From `TOP` only to `TOP`, `env`, `file`, `process` (`pypdf`). `mammoth` uses `network`. | No high. Warnings only for optional extras that the closure does not install. |
 
-One `algobank scope` run checks the full dexweb closure. The website is built only from those files (`pip install --no-index --find-links`). Algobank needs none of these packages at run time. It uses the standard library only.
+One `algobank scope --closure` run checks the full dexweb closure, file by file and as one graph. The website is built only from those files (`pip install --no-index --find-links`). Algobank needs none of these packages at run time. It uses the standard library only.
 
 ## 11. Known limitations
 

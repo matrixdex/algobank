@@ -588,6 +588,9 @@ class Package:
                 p = parent.get(n)
                 if not (isinstance(p, ast.Call) and p.func is n) and n.id in self.top.get(mod, {}):
                     edges.update(self._sym_nodes(mod, n.id))   # a function or class taken as a value may be called
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in names and names[n.id][0] in ("mod", "sym"):
+                other = names[n.id][1].split(".")[0]          # another package in the same graph (a closure)
+                if other != mod.split(".")[0] and other in MOD_CAPS: caps.add(MOD_CAPS[other])
             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in names and names[n.id][0] == "sym":
                 p = parent.get(n)
                 if not (isinstance(p, ast.Call) and p.func is n):

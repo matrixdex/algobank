@@ -154,6 +154,58 @@ def test_called_packages_should_be_algobanked():
 
 import hashlib, json
 
+# ---- closures: several packages as one graph ------------------------------------------------------------
+
+def pkg_wheel(tmp, name, files, requires=()):
+    path = os.path.join(tmp, f"{name}-1.0-py3-none-any.whl")
+    with zipfile.ZipFile(path, "w") as z:
+        for k, v in files.items(): z.writestr(k, v)
+        z.writestr(f"{name}-1.0.dist-info/METADATA", f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n"
+                   + "".join(f"Requires-Dist: {r}\n" for r in requires))
+    return path
+
+APP = {"app/__init__.py": "", "app/main.py": "from netlib import fetch\n\ndef run(u):\n    return fetch(u)\n"}
+NETLIB = {"netlib/__init__.py": "import socket\n\ndef fetch(u):\n    return socket.create_connection((u, 80))\n"}
+
+def closure(*paths):
+    reset()
+    return ad.closure_report([ad.analyze(ad.load(x)) for x in paths])
+
+def test_closure_follows_calls_into_dependencies():
+    """Alone, app's call into netlib is not followed. In the closure, app reaches netlib's network."""
+    with tempfile.TemporaryDirectory() as tmp:
+        app, net = pkg_wheel(tmp, "app", APP, ["netlib"]), pkg_wheel(tmp, "netlib", NETLIB)
+        assert ad.scope_report(ad.analyze(ad.load(app)))["scope"] == []
+        r = closure(app, net)
+        assert r["scope"] == ["network"]
+        assert {p["artifact"]: p["scope"] for p in r["packages"]}["app-1.0-py3-none-any.whl"] == ["network"]
+        assert r["enters"] == {"network": ["netlib-1.0-py3-none-any.whl"]}
+        assert not [x for x in r["findings"] if x["kind"] == "not algobanked"]
+        assert ad.main(["scope", "--closure", app, net]) == 0
+
+def test_closure_never_reports_less_than_the_scope_table():
+    """A package named in the scope table keeps the table's scope, even when its code is in the closure."""
+    with tempfile.TemporaryDirectory() as tmp:
+        app = pkg_wheel(tmp, "app", {"app/__init__.py": "import requests\n\ndef run(u):\n    return requests.get(u)\n"}, ["requests"])
+        fake = pkg_wheel(tmp, "requests", {"requests/__init__.py": "def get(u):\n    return u\n"})
+        r = closure(app, fake)
+        assert "network" in {p["artifact"]: p["scope"] for p in r["packages"]}["app-1.0-py3-none-any.whl"]
+
+def test_closure_reports_missing_dependencies():
+    with tempfile.TemporaryDirectory() as tmp:
+        r = closure(pkg_wheel(tmp, "app", APP, ["netlib"]))
+        assert [x["severity"] for x in r["findings"] if "netlib" in x["text"]] == ["warning"]
+
+def test_closure_reports_a_module_in_two_packages():
+    """Two wheels that ship the same file with different code: which runs depends on the order of installation."""
+    with tempfile.TemporaryDirectory() as tmp:
+        a = pkg_wheel(tmp, "one", {"shared/__init__.py": "X = 1\n"})
+        b = pkg_wheel(tmp, "two", {"shared/__init__.py": "X = 2\n"})
+        r = closure(a, b)
+        assert any(x["kind"] == "conflict" and x["severity"] == "high" for x in r["findings"])
+        same = closure(a, pkg_wheel(tmp, "three", {"shared/__init__.py": "X = 1\n"}))
+        assert not [x for x in same["findings"] if x["kind"] == "conflict"]
+
 def advisory(id, name, versions=(), ranges=(), files=()):
     """A record in the OSV format the advisories are published in."""
     e = dict(id=id, affected=[dict(package=dict(name=name, ecosystem="PyPI"), versions=list(versions),
