@@ -464,28 +464,36 @@ document.addEventListener("DOMContentLoaded", () => {
 </thead>
 <tbody>
 <tr>
-<td><code>socket</code>, <code>ssl</code>, <code>urllib</code>, <code>http</code>, <code>requests</code>, <code>httpx</code>, <code>aiohttp</code>, <code>ftplib</code>, <code>smtplib</code>, <code>websockets</code></td>
+<td><code>socket</code>, <code>ssl</code>, <code>urllib</code>, <code>urllib3</code>, <code>http</code>, <code>requests</code>, <code>httpx</code>, <code>aiohttp</code>, <code>ftplib</code>, <code>smtplib</code>, <code>poplib</code>, <code>imaplib</code>, <code>nntplib</code>, <code>telnetlib</code>, <code>xmlrpc</code>, <code>socketserver</code>, <code>websockets</code>, <code>websocket</code>, <code>paramiko</code>, <code>asyncssh</code>, <code>fabric</code>, <code>boto3</code>, <code>botocore</code>, <code>grpc</code>, <code>pycurl</code>, <code>tornado</code>, <code>twisted</code>, <code>dns</code>, <code>zmq</code>, <code>redis</code>, <code>pymongo</code>, database drivers; <code>asyncio.open_connection</code>, <code>asyncio.start_server</code></td>
 <td><code>network</code></td>
 </tr>
 <tr>
-<td><code>subprocess</code>, <code>multiprocessing</code>; <code>os.system</code>, <code>os.popen</code>, <code>os.execv</code>, <code>os.execl</code>, <code>os.execvp</code>, <code>os.spawnl</code>, <code>os.fork</code>, <code>os.kill</code></td>
+<td><code>subprocess</code>, <code>multiprocessing</code>, <code>pty</code>, <code>webbrowser</code>, <code>pexpect</code>, <code>sh</code>, <code>plumbum</code>, <code>invoke</code>; <code>asyncio.create_subprocess_exec</code> and <code>_shell</code>, <code>concurrent.futures.ProcessPoolExecutor</code>; <code>os.system</code>, <code>os.popen</code>, <code>os.fork</code>, <code>os.forkpty</code>, <code>os.kill</code>, <code>os.killpg</code>, <code>os.startfile</code>, each <code>os.exec*</code>, <code>os.spawn*</code> and <code>os.posix_spawn*</code></td>
 <td><code>process</code></td>
 </tr>
 <tr>
-<td><code>open()</code>, <code>shutil</code>, <code>tempfile</code>, <code>glob</code>; <code>os.remove</code>, <code>os.unlink</code>, <code>os.rmdir</code>, <code>os.rename</code>, <code>os.replace</code>, <code>os.makedirs</code>, <code>os.mkdir</code>, <code>os.listdir</code>, <code>os.scandir</code>, <code>os.walk</code>, <code>os.chmod</code></td>
+<td><code>open()</code>, <code>io.open</code>, <code>codecs.open</code>, <code>shutil</code>, <code>tempfile</code>, <code>glob</code>, <code>fileinput</code>, <code>sqlite3</code>, <code>dbm</code>, <code>mmap</code>, <code>zipfile</code>, <code>tarfile</code>, <code>gzip</code>, <code>bz2</code>, <code>lzma</code>, <code>aiofiles</code>; <code>os.open</code>, <code>os.remove</code>, <code>os.unlink</code>, <code>os.rmdir</code>, <code>os.rename</code>, <code>os.replace</code>, <code>os.makedirs</code>, <code>os.mkdir</code>, <code>os.listdir</code>, <code>os.scandir</code>, <code>os.walk</code>, <code>os.chmod</code>, <code>os.chown</code>, <code>os.symlink</code>, <code>os.link</code>, <code>os.truncate</code>, <code>os.utime</code> and similar</td>
 <td><code>file</code></td>
 </tr>
 <tr>
-<td>Methods with the names <code>.write_text</code>, <code>.read_text</code>, <code>.write_bytes</code>, <code>.read_bytes</code>, <code>.unlink</code>, <code>.rmtree</code>, <code>.mkdir</code>, <code>.touch</code></td>
-<td><code>file</code> (matched by name)</td>
+<td>Methods with these names, on any object: <code>.write_text</code>, <code>.read_text</code>, <code>.write_bytes</code>, <code>.read_bytes</code>, <code>.unlink</code>, <code>.rmtree</code>, <code>.mkdir</code>, <code>.touch</code>, <code>.iterdir</code>, <code>.rglob</code>, <code>.symlink_to</code>, <code>.rmdir</code> (<code>file</code>); <code>.create_subprocess_exec</code>, <code>.subprocess_exec</code>, <code>.posix_spawn</code> (<code>process</code>); <code>.create_connection</code>, <code>.open_connection</code>, <code>.start_server</code>, <code>.urlopen</code>, <code>.urlretrieve</code> (<code>network</code>)</td>
+<td>matched by name</td>
 </tr>
 <tr>
-<td><code>os.environ</code>, <code>os.getenv</code>, <code>os.putenv</code></td>
+<td><code>os.environ</code>, <code>os.environb</code>, <code>os.getenv</code>, <code>os.putenv</code>, <code>os.unsetenv</code>, <code>dotenv</code></td>
 <td><code>env</code></td>
 </tr>
 <tr>
-<td><code>ctypes</code>, <code>cffi</code></td>
+<td><code>ctypes</code>, <code>_ctypes</code>, <code>cffi</code>, <code>importlib.machinery.ExtensionFileLoader</code></td>
 <td><code>native</code></td>
+</tr>
+<tr>
+<td><code>pickle</code>, <code>marshal</code>, <code>dill</code>, <code>shelve</code>, <code>cloudpickle</code>, <code>jsonpickle</code> loads; <code>yaml.load</code> and <code>yaml.unsafe_load</code>; <code>torch.load</code>, <code>joblib.load</code>, <code>numpy.load</code>, <code>pandas.read_pickle</code>; <code>runpy</code>, <code>code</code>, <code>codeop</code>; <code>types.FunctionType</code> and <code>CodeType</code></td>
+<td><code class='top'>TOP</code> (they run code that the package does not show)</td>
+</tr>
+<tr>
+<td>A change to <code>sys.path</code>, <code>sys.meta_path</code> or <code>sys.path_hooks</code>; <code>site.addsitedir</code>; <code>zipimport</code>, <code>imp</code>, the loaders of <code>importlib.util</code> and <code>importlib.machinery</code></td>
+<td><code class='top'>TOP</code> (they change which code an import runs)</td>
 </tr>
 </tbody>
 </table>
@@ -1021,7 +1029,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <tbody>
 <tr>
 <td>Code root</td>
-<td><code>872073de7305976415596a9c1c28983cee4dd00d6a8dfe42c5f5316b050fada4</code></td>
+<td><code>3a22aee0466bca868feb18c0f778ceeb555d04e424746d24a81b0cbcabe9de9b</code></td>
 </tr>
 <tr>
 <td>Scope</td>
@@ -1033,11 +1041,11 @@ document.addEventListener("DOMContentLoaded", () => {
 </tr>
 <tr>
 <td>Nodes</td>
-<td>74</td>
+<td>81</td>
 </tr>
 <tr>
 <td>File SHA-256</td>
-<td><code>265803dce56352b54386c82d848c2cb7fac682e86b246274893b245b9bcd5386</code></td>
+<td><code>d37a4d78f50a5ce70a7a1dc62ce0ebefc7b1b422d8d7bfc0f27cc044bc7b5b2a</code></td>
 </tr>
 <tr>
 <td>Python</td>
@@ -1135,11 +1143,11 @@ print(p.root(), p.scope(), p.scope_root(), len(p.nodes))&quot;
 <p><strong>The price of implicit calls.</strong> Measured on the nine dependencies in the bank, against algobank 1.0.2. Nodes that reach <code class='top'>TOP</code> go from 657 to 1,606. Most of the rise has two causes. Real reflection is now flagged: frame inspection in beautifulsoup4 and typing_extensions. And <code>__getattr__</code> methods that forward every missing attribute (pypdf's <code>IndirectObject</code>, importlib_resources' <code>SpecLoaderAdapter</code>) can answer an attribute read on any object, because Algobank does not know types. In mammoth, 245 nodes gain <code>file</code>, mostly through the rule that a call on an attribute may run <code>ImageWriter.__call__</code>, a special method that writes files. dexweb, soupsieve and Algobank itself do not change.</p>
 <p><strong>Self-analysis.</strong> Algobank analyzed <code>pkgmerkle.py</code> alone:</p>
 <ul>
-<li>It has 74 nodes.</li>
+<li>It has 81 nodes.</li>
 <li>It has no scope.</li>
 <li>It has no <code class='top'>TOP</code>.</li>
 <li>Repeated runs give the same hashes.</li>
-<li>A one-line change to <code>H()</code> changes <code>H</code>. It also changes the 8 nodes that call <code>H</code> directly or indirectly. The other 65 nodes keep their hashes.</li>
+<li>A one-line change to <code>H()</code> changes <code>H</code>. It also changes the 8 nodes that call <code>H</code> directly or indirectly. The other 72 nodes keep their hashes.</li>
 </ul>
 <h3>10.4 Proof of the code root</h3>
 <p><code>v0.1/proofs/CodeRoot.v</code> models <code>Package.leaves()</code> and <code>Package.root()</code> in Coq 8.18. It proves these theorems:</p>
@@ -1309,6 +1317,38 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 <td>medium. In <code>diff</code>, new cases only. In a closure, names count across all its packages.</td>
 </tr>
 <tr>
+<td>A Python file (<code>.py</code> or <code>.pyw</code>) that cannot be decoded or parsed. Algobank decodes each file as Python does: by its byte order mark or its coding line (PEP 263).</td>
+<td>high: not analyzed (<code class='top'>TOP</code>)</td>
+</tr>
+<tr>
+<td>Compiled Python (<code>.pyc</code>, <code>.pyo</code>). Python can run it in place of the source.</td>
+<td>high: not checked</td>
+</tr>
+<tr>
+<td>A file stored twice in the archive. Two paths that differ only in case or Unicode form. A path outside the package, or with a backslash. A file too large to read.</td>
+<td>high: the code analyzed may not be the code installed</td>
+</tr>
+<tr>
+<td>Package metadata that is missing, or that names another package or version than the file name. More than one top-level metadata file. Only the top-level <code>.dist-info</code> counts: a vendored copy deeper in the archive is not the package's.</td>
+<td>high</td>
+</tr>
+<tr>
+<td>A top-level module named like a standard library module, such as <code>json.py</code>. Programs that import that name may run the package's code.</td>
+<td>high</td>
+</tr>
+<tr>
+<td>An entry point in a group that a tool loads by itself, such as <code>pytest11</code> or <code>distutils.commands</code>. Installing the package is enough for its code to run.</td>
+<td>high</td>
+</tr>
+<tr>
+<td>A file that the <code>data</code> scheme installs into site-packages or a <code>bin</code> folder, or a startup file installed that way. Other files that the scheme installs outside the package.</td>
+<td>high; other files medium</td>
+</tr>
+<tr>
+<td>A source file that declares an encoding other than UTF-8. Invisible or direction-changing characters in source code (Trojan Source).</td>
+<td>medium</td>
+</tr>
+<tr>
 <td>A changed dependency range. New or changed data files.</td>
 <td>low</td>
 </tr>
@@ -1348,6 +1388,7 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 <li>2: an error occurred.</li>
 </ul>
 <p>Thus the tool can gate a CI job. <code>--json</code> gives the same report for programs and agents. The report also tells what it could not see: unparsed files and native binaries.</p>
+<p><strong>Reading.</strong> A native binary is found by its name (<code>.so</code>, <code>.so.1</code>, <code>.pyd</code>, <code>.dylib</code>, <code>.dll</code>) and by its first bytes (ELF, PE, Mach-O, WebAssembly), whatever the file is called. Text from a package (file names, dependency names, entry points) is printed with control and direction characters as escapes. Thus a file name cannot erase a finding from the terminal. A file that Algobank cannot read, or an error while it analyzes one, ends the run with status 2. Nothing passes unread.</p>
 <p><strong>Known data.</strong> Each release of Algobank ships <code>algobank/known.json</code>. <code>v0.1/build_cache.py</code> builds it. It holds the published advisory records for the 1,000 most downloaded PyPI packages. The records are in OSV format. They are not changed. Algobank needs no network for them at run time. They come through the package manager, like any package.</p>
 <p>The file contains:</p>
 <ul>
@@ -1358,7 +1399,7 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 <ol>
 <li><strong>Records are data. The code decides.</strong> Algobank ships the records as published. <code>algobank/diff.py</code> decides on the machine of the user if a record applies. A record applies to a version in its list. A record also applies to a version in one of its ranges. Algobank compares versions with PEP 440 order. A codegen can read the records. It can also read the code. Algobank trusts nothing that was interpreted elsewhere.</li>
 <li><strong>Algobank never matches a withdrawn advisory.</strong> Its publisher retracted it. Thus the versions that it named must pass. The record stays in <code>known.json</code>. Records are only added.</li>
-<li><strong>A match is a high finding.</strong> The finding names the advisory identifier. It points to <code>known.json</code>. The result of the analysis does not change this.</li>
+<li><strong>A match is a high finding.</strong> The finding names the advisory identifier. It points to <code>known.json</code>. The result of the analysis does not change this. A version in an advisory's list matches by PEP 440 equality: <code>1.0</code> matches <code>1.0.0</code>. Algobank matches the name and version in the metadata, and also those in the file name if they differ.</li>
 <li>Sometimes a version cannot be compared with a range. Then the advisory can apply. Thus Algobank reports it.</li>
 <li>Algobank checks each file in the archive against the published malicious-file digests. Thus Algobank also catches a repackaged copy.</li>
 <li>Some advisories have two identifiers: a <code>MAL-</code> record and its <code>PYSEC-</code> alias. Algobank ships such an advisory once.</li>
@@ -1388,7 +1429,7 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 </tr>
 <tr>
 <td>The wheel of Algobank (<code>algobank scope dist/algobank-1.0.3-py3-none-any.whl</code>)</td>
-<td><code>file</code>, in <code>load</code> and <code>known</code>. <code>load</code> reads the one file that it gets. <code>known</code> reads <code>known.json</code>. No network. No other findings.</td>
+<td><code>file</code>, in <code>load</code>, <code>known</code> and <code>read_members</code>. <code>load</code> reads the one file that it gets. <code>known</code> reads <code>known.json</code>. <code>read_members</code> reads the archive in memory with <code>zipfile</code> and <code>tarfile</code>. No network. No other findings.</td>
 </tr>
 <tr>
 <td>The sdist of Algobank</td>
