@@ -38,6 +38,9 @@ for r in [r for r in records if "rejected" in r]:
         raise SystemExit(f"bank.jsonl: the rejection of {r['name']} {r['version']} names other hashes than its admission")
     rejected[(r["name"], r["version"])] = r
 records = [r for r in records if "rejected" not in r]       # the admissions; a rejection marks one of them
+latest = {}                                                 # a version algobanked again: the table shows its newest record
+for r in records: latest[(r["name"], r["version"])] = r
+shown = list(latest.values())
 
 # THE CODE ROOT AS A STRIP: every banked version is analyzed again at each build. A code root is defined by the
 # version of Algobank that computed it, so each record is checked by the algobank its record names (algobanked_by),
@@ -164,6 +167,8 @@ def details(r):                                             # every field of the
     rows += [(k.replace("_", " "), short(r[k]) if k == "sha256" else strip(r) + copy(r[k]) if k == "code_root" else text(r[k]))
              for k in ("file", "sha256", "code_root", "nodes", "source", "used_for", "algobanked_by") if k in r]
     if by_rejected(r): rows.append(("note", "<span class='warning'>algobanked by a rejected version of algobank: algobank it again</span>"))
+    earlier = [x for x in records if (x["name"], x["version"]) == (r["name"], r["version"]) and x is not r]
+    if earlier: rows.append(("earlier records", "; ".join(f"{esc(x['admitted'])} by {text(x.get('algobanked_by', ''))}" for x in earlier)))
     return "<dl>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows) + "</dl>"
 rows = "".join(                                             # one tbody per record: the entry, and its details below it
     f"<tbody data-name='{esc(r['name'])}' data-version='{esc(r['version'])}'>"
@@ -175,7 +180,7 @@ rows = "".join(                                             # one tbody per reco
     f"<td class='wide'>{status(r)}</td><td class='wide'>{short(r['sha256']) if r.get('sha256') else ''}</td>"
     f"<td class='wide'>{strip(r)}</td><td class='narrow'>{findings(r['findings']) if (r['name'], r['version']) not in rejected else status(r)}</td></tr>"
     f"<tr class='details' hidden><td colspan='10'>{details(r)}</td></tr></tbody>"
-    for _, r in sorted(enumerate(records), key=lambda x: (x[1]["admitted"], x[0]), reverse=True))  # newest admitted first; same day: last added first
+    for _, r in sorted(enumerate(shown), key=lambda x: (x[1]["admitted"], x[0]), reverse=True))  # newest admitted first; same day: last added first
 page = (
     "<input id='q' type='text' placeholder='Search package in algobank (for example, dexweb v4.2.0)' data-phone='Search algobank' aria-label='Search the bank' autocomplete='off' spellcheck='false'>\n"
     "<div id='msg' role='status'></div>\n"
@@ -196,7 +201,7 @@ with open("config.json", "w") as f:
 from algobank.diff import norm, vkey                        # Algobank's own name normalization and PEP 440 ordering
 known = json.loads(subprocess.run(["git", "show", "origin/live:known.json"], capture_output=True, text=True, check=True).stdout)
 admitted = {}
-for r in records:
+for r in shown:
     if (r["name"], r["version"]) not in rejected:              # a rejected version is not admitted
         admitted.setdefault(norm(r["name"]), []).append(r["version"])
 def first_line(e):                                          # the record's own words: its summary, or its details' first sentence
