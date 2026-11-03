@@ -1592,7 +1592,7 @@ python v0.1/release.py
 <li>Code blocks never go off the page.</li>
 <li>Each page fits screens of 320 pixels and wider.</li>
 </ul>
-<p><strong>Dependencies.</strong> All dependencies of Algobank are algobanked. They are admitted to the bank (<code>bank.jsonl</code> on <code>live</code>). Each version is identified by the SHA-256 of its file. Each SHA-256 was checked against the digest that PyPI publishes.</p>
+<p><strong>Dependencies.</strong> All dependencies of Algobank are algobanked by Algobank 1.0.3. They are admitted to the bank (<code>bank.jsonl</code> on <code>live</code>). Each version is identified by the SHA-256 of its file. Each SHA-256 was checked against the digest that PyPI publishes.</p>
 <table>
 <thead>
 <tr>
@@ -1604,28 +1604,22 @@ python v0.1/release.py
 </thead>
 <tbody>
 <tr>
-<td><code>algobank</code> 0.1.0</td>
-<td>Itself. The first algobanked code.</td>
+<td><code>algobank</code> 1.0.3</td>
+<td>The release on PyPI. It algobanked itself, then each package below again, from the same files.</td>
 <td><code>file</code></td>
 <td>no high</td>
 </tr>
 <tr>
-<td><code>algobank</code> 1.0.1</td>
-<td>The release on PyPI. It algobanked itself.</td>
+<td><code>algobank</code> 0.1.0, 1.0.1, 1.0.2</td>
+<td>Rejected on 2026-11-03 for detection holes (section 10.6). Their records stay in the bank. The site shows the records of 1.0.3 in their place.</td>
 <td><code>file</code></td>
-<td>no high</td>
-</tr>
-<tr>
-<td><code>algobank</code> 1.0.2</td>
-<td>The release on PyPI. It algobanked itself.</td>
-<td><code>file</code></td>
-<td>no high</td>
+<td>rejected</td>
 </tr>
 <tr>
 <td><code>flit_core</code> 3.12.0</td>
-<td>The build backend of Algobank. It runs when Algobank is installed from source.</td>
+<td>The build backend of Algobank, pinned in <code>build-requirements.txt</code>. It runs when Algobank is built or installed from source.</td>
 <td><code class='top'>TOP</code>, <code>env</code>, <code>file</code></td>
-<td>no high</td>
+<td>no high; one medium: an effect under a shared name</td>
 </tr>
 <tr>
 <td><code>dexweb</code> 4.2.5</td>
@@ -1636,8 +1630,8 @@ python v0.1/release.py
 <tr>
 <td><code>beautifulsoup4</code> 4.15.0, <code>cobble</code> 0.1.4, <code>importlib_resources</code> 7.1.0, <code>mammoth</code> 1.13.0, <code>pypdf</code> 6.21.2, <code>soupsieve</code> 3.0.4, <code>typing_extensions</code> 4.16.0</td>
 <td>The packages that dexweb calls</td>
-<td>From <code class='top'>TOP</code> only to <code class='top'>TOP</code>, <code>env</code>, <code>file</code>, <code>process</code> (<code>pypdf</code>). <code>mammoth</code> uses <code>network</code>.</td>
-<td>No high. Warnings only for optional extras that the closure does not install.</td>
+<td>From none (<code>soupsieve</code>) to <code class='top'>TOP</code>, <code>env</code>, <code>file</code>, <code>process</code> (<code>pypdf</code>). <code>mammoth</code> uses <code>network</code>.</td>
+<td>No high. Warnings for optional extras that the closure does not install. Medium: effects in a special method or under a shared name (<code>mammoth</code>, <code>pypdf</code>, <code>importlib_resources</code>), invisible characters in string tables (<code>beautifulsoup4</code>).</td>
 </tr>
 </tbody>
 </table>
