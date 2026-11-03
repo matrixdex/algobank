@@ -350,7 +350,7 @@ Reviewers must examine the small parts that touch files, the network or processe
 
 1. **Two types of part.**
    - A compute part declares no scope. It has no effectful imports. It has no `TOP`. It has no introspection. It has no clock. It has no randomness.
-   - An effect part declares narrow scopes with parameters. Examples: `file: read ./data` and `network: api.example.com:443`. Effect parts must be small.
+   - An effect part declares narrow scopes with parameters. Examples: `file: read ./data` and `network: api.example.com:443`. Effect parts must be small. An effect lives in a plain function with a unique name: not in a special method or a property, and not under a name that other functions share. Then calls matched by name cannot carry it to unrelated code. Two findings report breaks of this rule (section 10.6).
 2. **Effects come in as arguments.** Compute code gets data from its caller. It also gets readers, clients, the current time and random generators from its caller. It never gets them itself. Thus authority is visible at the point where parts connect. This pattern is "functional core, imperative shell".
 3. **Manifest.** Each package declares the scope of each module in a manifest, for example `algobank.toml`. Admission rejects each module whose detected scope is larger than its declared scope. Admission reports declared scope that is never used.
 4. **Allowlist for compute parts.** A compute part can import only from a list of pure standard-library modules. It cannot use dunder introspection. It cannot use frame access. An allowlist fails safe. A denylist of dangerous names always misses something.
@@ -829,6 +829,8 @@ pip install --no-index --find-links wheels/ NAME==VERSION     # installs exactly
 | A new dependency. This includes test-only and optional dependencies. Algobank does not analyze its code here. Thus its scope is unknown (`TOP`). | high |
 | A source distribution. Its build runs the build backend and any `setup.py` (`TOP`). | high, in `scope` and in `diff` |
 | New `file` scope. Other new dynamic code: computed imports and attributes, `__getattr__`, `import *`. A new entry point or installed script. | medium |
+| An effect in a special method: a special method other than `__init__`, or a property or descriptor, whose own code uses `file`, `network`, `process`, `env` or `native`. Python runs it without a visible call. | medium. In `diff`, new cases only. |
+| An effect under a shared name: a function whose own code uses such a scope, and whose name other functions also have. Calls matched by name reach it from unrelated code. Special-method names are not counted: `K()` finds `__init__` by class. | medium. In `diff`, new cases only. In a closure, names count across all its packages. |
 | A changed dependency range. New or changed data files. | low |
 
 **Called packages.** Each package that a package calls must be algobanked too. These are the `Requires-Dist` dependencies in its metadata. This is a soft condition:
@@ -887,7 +889,7 @@ Rules:
    - Sometimes a version cannot be compared with a range. Then the advisory can apply. Thus Algobank reports it.
    - Algobank checks each file in the archive against the published malicious-file digests. Thus Algobank also catches a repackaged copy.
    - Some advisories have two identifiers: a `MAL-` record and its `PYSEC-` alias. Algobank ships such an advisory once.
-4. **Algobank keeps catches. It never stores passes** (principle 9). Records are only added. They are never removed. Algobank ships no report or verdict about any package. Algobank analyzes each file each time it checks the file.
+4. **Algobank keeps catches. It never stores passes** (principle 9). Records are only added. They are never removed. A refresh keeps every earlier record, also when its package is no longer one of the 1,000 most downloaded. A record that is still published replaces its older copy. Algobank ships no report or verdict about any package. Algobank analyzes each file each time it checks the file.
 5. **Each result tells the age of the data.** It gives the date of the data. It gives the sources. A report after that date is missing until Algobank is updated. Thus the release cadence of Algobank is the update cadence of the known data.
 
 **Validation.**

@@ -8,7 +8,9 @@ Not shipped. Reads advisories from local git checkouts and the list of popular p
   python3.14 v0.1/build_cache.py top.json COUNT advisory-database malicious-packages algobank/known.json
 
 Needs PyYAML (the PyPA advisories are YAML; they are stored as JSON). Records are copied as published:
-algobank/diff.py decides what they mean, on the machine that runs it. Nothing is downloaded from PyPI and
+algobank/diff.py decides what they mean, on the machine that runs it. A catch is kept forever: every record of
+the previous file stays, also when its package leaves the popular list; a record that is still published
+replaces its older copy. Nothing is downloaded from PyPI and
 no package is analyzed here: a pass is never stored.
 """
 import datetime, json, os, subprocess, sys
@@ -46,16 +48,26 @@ def main(top, count, advisory_repo, malicious_repo, out):
         if not ids & seen:
             seen |= ids
             advisories.append(e)
+    kept = 0
+    if os.path.exists(out):                                   # records are only ever added
+        with open(out, encoding="utf-8") as fh:
+            for e in json.load(fh)["advisories"]:
+                ids = {e["id"], *e.get("aliases", [])}
+                if not ids & seen:
+                    seen |= ids
+                    advisories.append(e)
+                    kept += 1
     data = dict(
         date=datetime.date.today().isoformat(),
         sources=[f"top {count} PyPI packages by downloads (hugovk/top-pypi-packages, {top_date})",
                  f"pypa/advisory-database {git(advisory_repo, 'rev-parse', '--short', 'HEAD').strip()}",
-                 f"ossf/malicious-packages {git(malicious_repo, 'rev-parse', '--short', 'HEAD').strip()}"],
+                 f"ossf/malicious-packages {git(malicious_repo, 'rev-parse', '--short', 'HEAD').strip()}"]
+                + ([f"{kept} earlier records kept (a catch is kept forever)"] if kept else []),
         advisories=sorted(advisories, key=lambda e: e["id"]))
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=1, sort_keys=True, default=str)     # YAML dates become strings
         fh.write("\n")
-    print(f"{len(advisories)} advisories for {len(names)} packages", file=sys.stderr)
+    print(f"{len(advisories)} advisories for {len(names)} packages ({kept} earlier records kept)", file=sys.stderr)
 
 if __name__ == "__main__":
     main(*sys.argv[1:])

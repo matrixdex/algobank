@@ -289,6 +289,7 @@ def closure_report(arts):
     for a in arts:
         if not a["is_wheel"]:
             f.append(finding("high", "sdist", f"{a['art'].filename} is not in the closure graph: " + SDIST_TEXT))
+    f += [x for x in design_findings(pkg) if x["kind"] == "effect under a shared name"]   # names shared across packages
     outside = sorted({d for a in arts for d in a["deps"] if norm(d) not in inside})
     for d in outside:
         f.append(finding("warning", "not algobanked", f"{d} is called but not in this closure: its code is not followed; run algobank on it too"))
@@ -319,6 +320,33 @@ def finding(sev, kind, text, nodes=()):
     nodes = list(nodes)
     return dict(severity=sev, kind=kind, text=text, nodes=nodes[:10], more=max(0, len(nodes) - 10))
 
+EFFECTS = {"file", "network", "process", "env", "native"}
+PROPERTY = {"property", "cached_property", "setter", "getter", "deleter"}
+
+def design_findings(pkg, only=None):
+    """Two ways code makes its effects hard to place: an effect in a special method, which Python runs without
+    a visible call, and an effect in a function whose name other functions share, so that calls matched by name
+    reach it from unrelated code. `only`: report just these nodes (for diff, the new cases)."""
+    names = {}
+    for nid in pkg.funcs: names.setdefault(nid.split(":", 1)[1].split(".")[-1], []).append(nid)
+    special, shared = [], []
+    for nid, (fn, mod, cls) in sorted(pkg.funcs.items()):
+        caps = sorted(pkg.nodes[nid]["direct_caps"] & EFFECTS) if nid in pkg.nodes else []
+        if not caps or (only is not None and nid not in only): continue
+        name = nid.split(":", 1)[1].split(".")[-1]
+        deco = {(d.func if isinstance(d, ast.Call) else d) for d in fn.decorator_list}
+        deco = {d.id if isinstance(d, ast.Name) else d.attr if isinstance(d, ast.Attribute) else "" for d in deco}
+        if name.startswith("__") and name.endswith("__") and name != "__init__" or deco & PROPERTY or name in ("__get__", "__set__", "__delete__"):
+            special.append(finding("medium", "effect in a special method",
+                                   f"special method with {', '.join(caps)}: {nid} runs without a visible call; "
+                                   "move the effect into a plain, uniquely named function", [nid]))
+        elif len(names[name]) > 1 and not (name.startswith("__") and name.endswith("__")):   # K() finds __init__ by class
+            shared.append(finding("medium", "effect under a shared name",
+                                  f"effectful function with a shared name: {nid} ({', '.join(caps)}) shares its name with "
+                                  f"{len(names[name]) - 1} other definition(s); a unique name keeps its scope from spreading "
+                                  "to unrelated callers", [nid]))
+    return special + shared
+
 def scope_report(a):
     pkg = a["pkg"]
     f = []
@@ -335,6 +363,7 @@ def scope_report(a):
         if users: f.append(finding("info", "dynamic", FLAG_TEXT[flag], users))
     if a["natives"]:
         f.append(finding("high", "native", NATIVE_TEXT, list(a["natives"])))
+    f += design_findings(pkg)
     return dict(artifact=a["art"].filename, sha256=a["art"].sha256, code_root=pkg.root(),
                 nodes=len(pkg.nodes), scope=scope_of(a), modules=module_scopes(pkg),
                 dependencies=a["deps"], findings=f, coverage=coverage(a))
@@ -409,6 +438,8 @@ def diff_report(a, b):
     for d in sorted(set(a["deps"]) & set(b["deps"])):
         if a["deps"][d] != b["deps"][d]:
             f.append(finding("low", "dependency", f"{d}: {a['deps'][d]} -> {b['deps'][d]}"))
+    old_design = {x["text"] for x in design_findings(p)}
+    f += [x for x in design_findings(q) if x["text"] not in old_design]     # new cases only
     for e in sorted(b["entry_points"] - a["entry_points"]):
         f.append(finding("medium", "entry point", f"new entry point {e}"))
     changed_files = [x for x in b["other"] if x in a["other"] and a["other"][x] != b["other"][x]]

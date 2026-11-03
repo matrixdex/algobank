@@ -206,6 +206,36 @@ def test_closure_reports_a_module_in_two_packages():
         same = closure(a, pkg_wheel(tmp, "three", {"shared/__init__.py": "X = 1\n"}))
         assert not [x for x in same["findings"] if x["kind"] == "conflict"]
 
+# ---- design findings ---------------------------------------------------------------------------------------
+
+def test_effect_in_a_special_method():
+    with tempfile.TemporaryDirectory() as tmp:
+        files = {"w/__init__.py": "class Writer:\n    def __call__(self, p):\n        return open(p, 'w')\n"
+                                   "    @property\n    def size(self):\n        return open('x').read()\n"
+                                   "    def __init__(self):\n        self.f = open('y')\n"}
+        r = ad.scope_report(ad.analyze(ad.load(pkg_wheel(tmp, "w", files))))
+        hits = sorted(x["nodes"][0] for x in r["findings"] if x["kind"] == "effect in a special method")
+        assert hits == ["w:Writer.__call__", "w:Writer.size"], hits          # __init__ is called visibly: K()
+        assert all(x["severity"] == "medium" for x in r["findings"] if x["kind"] == "effect in a special method")
+
+def test_effect_under_a_shared_name():
+    with tempfile.TemporaryDirectory() as tmp:
+        files = {"s/__init__.py": "class Files:\n    def open(self, p):\n        return open(p)\n"
+                                   "class Doc:\n    def open(self):\n        return 1\n"
+                                   "def fetch_file(p):\n    return open(p)\n"
+                                   "class A:\n    def __init__(self):\n        self.f = open('a')\nclass B:\n    def __init__(self):\n        pass\n"}
+        r = ad.scope_report(ad.analyze(ad.load(pkg_wheel(tmp, "s", files))))
+        hits = [x["nodes"][0] for x in r["findings"] if x["kind"] == "effect under a shared name"]
+        assert hits == ["s:Files.open"], hits                               # fetch_file is unique; __init__ is found by class
+
+def test_design_findings_in_diff_are_new_cases_only():
+    with tempfile.TemporaryDirectory() as tmp:
+        old = dict(BASE, **{"demo/w.py": "class W:\n    def __call__(self, p):\n        return open(p)\n"})
+        new = dict(old, **{"demo/x.py": "class X:\n    def __str__(self):\n        return open('x').read()\n"})
+        r = run_diff(old, new)
+        hits = [x["nodes"][0] for x in r["findings"] if x["kind"] == "effect in a special method"]
+        assert hits == ["demo.x:X.__str__"], hits
+
 def advisory(id, name, versions=(), ranges=(), files=()):
     """A record in the OSV format the advisories are published in."""
     e = dict(id=id, affected=[dict(package=dict(name=name, ecosystem="PyPI"), versions=list(versions),
